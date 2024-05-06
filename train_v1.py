@@ -94,23 +94,21 @@ def worker(task_params):
     return results
 
 def sampledataset(Total_episodes,N_episodes,N_back,label='L',kk=2):
-    sample = [str(i).zfill(10) for i in list(range(Total_episodes-N_back*N_episodes,Total_episodes,N_episodes))]
-    #print(sample)
-    sampled = random.sample(sample,k=kk)
-    print(sampled)
     ds = []
-    for s in sampled:
-        try:
-            #print(s)
-            ds.append(torch.load(os.path.join(wd,'train',f'{label}train_{s}_{N_episodes}')))
-        except:
-            pass
-    #print(len(ds))
+    if N_back > 0:
+        sample = [str(i).zfill(10) for i in list(range(Total_episodes-N_back*N_episodes,Total_episodes,N_episodes))]
+        #print(sample)
+        sampled = random.sample(sample,k=kk)
+        print(sampled)
+        
+        for s in sampled:
+            try:
+                #print(s)
+                ds.append(torch.load(os.path.join(wd,'train',f'{label}train_{s}_{N_episodes}')))
+            except:
+                pass
+        #print(len(ds))
     return ds
-
-
-wd = os.path.dirname(__file__)
-
 
 
 if __name__ == '__main__':
@@ -121,14 +119,15 @@ if __name__ == '__main__':
     selfplay_device = 'cuda'
 
     N_history = 15 # number of historic moves in model input
+    N_feature = 5
 
-    LM, DM, UM = Network_V2(N_history+4),Network_V2(N_history+4),Network_V2(N_history+4)
+    LM, DM, UM = Network_V3(N_history+N_feature),Network_V3(N_history+N_feature),Network_V3(N_history+N_feature)
     #print(LM.nhist)
     print('Init wt',LM.fc2.weight.data[0].mean())
 
-    Total_episodes = 40000000 # current episode / model version
-    Max_episodes   = 40000000 # episode to stop. multiple of 50000
-    N_episodes     = 12500 # number of games to be played before each round of training
+    Total_episodes = 0 # current episode / model version
+    Max_episodes   = 1000 # episode to stop. multiple of 50000
+    N_episodes     = 1000 # number of games to be played before each round of training
 
     Save_frequency = 50000
 
@@ -138,19 +137,18 @@ if __name__ == '__main__':
     transfer = False
     transfer_name = ''
 
-    version = f'H{str(N_history).zfill(2)}-V4'
+    version = f'H{str(N_history).zfill(2)}-V5'
 
-    batch_size = 256
+    batch_size = 64
     nepoch = 1
-    LR = 0.0001
+    LR = 0.00003
     l2_reg_strength = 0
-    rand_param = 0.04 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
+    rand_param = 1 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
+
+    n_past_ds = 0 # augment using since last NP datasets.
+    n_choice_ds = 0 # choose NC from last NP datasets
 
     n_worker = 0 # default dataloader
-    
-    #maxpool = N_episodes
-    #Xbuffer = [deque(maxlen=maxpool), deque(maxlen=maxpool), deque(maxlen=maxpool)]
-    #Ybuffer = [deque(maxlen=maxpool), deque(maxlen=maxpool), deque(maxlen=maxpool)]
 
     if transfer:
         print(f'use transfer {transfer_name}')
@@ -165,6 +163,10 @@ if __name__ == '__main__':
 
     print('Init wt',LM.fc2.weight.data[0].mean())
 
+    if Total_episodes == 0:
+        torch.save(LM.state_dict(),os.path.join(wd,'models',f'LM_{version}_{str(Total_episodes).zfill(10)}.pt'))
+        torch.save(DM.state_dict(),os.path.join(wd,'models',f'DM_{version}_{str(Total_episodes).zfill(10)}.pt'))
+        torch.save(UM.state_dict(),os.path.join(wd,'models',f'UM_{version}_{str(Total_episodes).zfill(10)}.pt'))
 
     while Total_episodes < Max_episodes:
         Xbuffer = [[],[],[]]
@@ -205,21 +207,21 @@ if __name__ == '__main__':
         del results, tasks, chunk
 
         print([len(_) for _ in Ybuffer],'L WR:',round((Lwin/N_episodes).item()*100,2))
-
-
+        print(torch.concat(list(Ybuffer[0])).shape)
+        quit()
         # train landlord
         train_dataset = TensorDataset(torch.concat(list(Xbuffer[0])), torch.concat(list(Ybuffer[0])).unsqueeze(1))
         torch.save(train_dataset,os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-N_episodes).zfill(10)}_{N_episodes}'))
 
         # sample 2 from last 5
-        ds = sampledataset(Total_episodes-N_episodes,N_episodes,10,'L',2)
+        ds = sampledataset(Total_episodes-N_episodes,N_episodes,n_past_ds,'L',n_choice_ds)
         print(f'Using previous {len(ds)} datasets')
         ds.append(train_dataset)
         train_dataset = ConcatDataset(ds)
         del ds
         # remove last 11+
         try:
-            os.remove(os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-11*N_episodes).zfill(10)}_{N_episodes}'))
+            os.remove(os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-n_past_ds+1*N_episodes).zfill(10)}_{N_episodes}'))
         except:pass
     
         print(len(train_dataset))
@@ -236,14 +238,14 @@ if __name__ == '__main__':
         torch.save(train_dataset,os.path.join(wd,'train',f'Dtrain_{str(Total_episodes-N_episodes).zfill(10)}_{N_episodes}'))
 
         # sample 2 from last 5
-        ds = sampledataset(Total_episodes-N_episodes,N_episodes,10,'D',2)
+        ds = sampledataset(Total_episodes-N_episodes,N_episodes,n_past_ds,'D',n_choice_ds)
         print(f'Using previous {len(ds)} datasets')
         ds.append(train_dataset)
         train_dataset = ConcatDataset(ds)
         del ds
         # remove last 11+
         try:
-            os.remove(os.path.join(wd,'train',f'Dtrain_{str(Total_episodes-11*N_episodes).zfill(10)}_{N_episodes}'))
+            os.remove(os.path.join(wd,'train',f'Dtrain_{str(Total_episodes-n_past_ds+1*N_episodes).zfill(10)}_{N_episodes}'))
         except:pass
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
@@ -258,14 +260,14 @@ if __name__ == '__main__':
         torch.save(train_dataset,os.path.join(wd,'train',f'Utrain_{str(Total_episodes-N_episodes).zfill(10)}_{N_episodes}'))
 
         # sample 2 from last 5
-        ds = sampledataset(Total_episodes-N_episodes,N_episodes,10,'U',2)
+        ds = sampledataset(Total_episodes-N_episodes,N_episodes,n_past_ds,'U',n_choice_ds)
         print(f'Using previous {len(ds)} datasets')
         ds.append(train_dataset)
         train_dataset = ConcatDataset(ds)
         del ds
         # remove last 11+
         try:
-            os.remove(os.path.join(wd,'train',f'Utrain_{str(Total_episodes-11*N_episodes).zfill(10)}_{N_episodes}'))
+            os.remove(os.path.join(wd,'train',f'Utrain_{str(Total_episodes-n_past_ds+1*N_episodes).zfill(10)}_{N_episodes}'))
         except:pass
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
@@ -278,7 +280,7 @@ if __name__ == '__main__':
         gc.collect()
         torch.cuda.empty_cache()
 
-        # save once every 50000 episodes
+        # save once every X episodes
         if Total_episodes % Save_frequency == 0:
             torch.save(LM.state_dict(),os.path.join(wd,'models',f'LM_{version}_{str(Total_episodes).zfill(10)}.pt'))
             torch.save(DM.state_dict(),os.path.join(wd,'models',f'DM_{version}_{str(Total_episodes).zfill(10)}.pt'))

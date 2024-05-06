@@ -105,3 +105,121 @@ class Network_V2(nn.Module):
         x = F.relu(self.fc6(x))
         x = torch.sigmoid(self.fc7(x))
         return x
+    
+class Network_V3(nn.Module): # this network considers public cards of landlord
+    def __init__(self, z, y=4, x=15, v=1):
+        super(Network_V3, self).__init__()
+        self.y = y
+        self.x = x
+        self.non_hist = 5
+        self.nhist = z - self.non_hist  # Number of historical layers to process with LSTM
+        lstm_input_size = y * x  # Assuming each layer is treated as one sequence element
+
+        # LSTM to process the historical data
+        self.lstm = nn.LSTM(input_size=lstm_input_size, hidden_size=256, batch_first=True)
+
+        # Calculate the size of the non-historical input
+        input_size = self.non_hist * y * x + 256  # +256 for the LSTM output
+        hidden_size = 512
+
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, hidden_size)
+        self.fc4 = nn.Linear(hidden_size, hidden_size)
+        self.fc5 = nn.Linear(hidden_size, hidden_size)
+        self.fc6 = nn.Linear(hidden_size, hidden_size)
+        self.fc7 = nn.Linear(hidden_size, v)
+        self.flatten = nn.Flatten()
+
+    def forward(self, x):
+        # Extract the historical layers for LSTM processing
+        historical_data = x[:, self.non_hist-1:self.non_hist-1+self.nhist, :, :]  # Historical layers are from index 3 to 17
+        historical_data = historical_data.flip(dims=[1])
+        historical_data = historical_data.reshape(-1, self.nhist, self.y * self.x)  # Reshape for LSTM
+
+        # Process historical layers with LSTM
+        lstm_out, _ = self.lstm(historical_data)
+        lstm_out = lstm_out[:, -1, :]  # Use only the last output of the LSTM
+
+        # Extract and flatten the non-historical part of the input
+        non_historical_data = torch.cat((x[:, :self.non_hist-1, :, :], x[:, self.non_hist-1+self.nhist:, :, :]), dim=1)  # Keeping layers outside of 3 to 17
+        non_historical_data = non_historical_data.reshape(-1, non_historical_data.shape[1] * self.y * self.x)
+
+        # Concatenate LSTM output with non-historical data
+        x = torch.cat((lstm_out, non_historical_data), dim=1)
+
+        # Process through FNN as before
+        x = self.flatten(x)
+        x = F.relu(self.fc1(x))
+        x1 = x
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = x + x1
+        x1 = x
+        x = F.relu(self.fc4(x))
+        x = F.relu(self.fc5(x))
+        x = x + x1
+        x = F.relu(self.fc6(x))
+        x = torch.sigmoid(self.fc7(x))
+        return x
+
+
+class Network_V3_Unified(nn.Module):
+    def __init__(self, z, y=4, x=15, v=1, num_players=3):
+        super(Network_V3_Unified, self).__init__()
+        self.y = y
+        self.x = x
+        self.non_hist = 5
+        self.nhist = z - self.non_hist  # Number of historical layers to process with LSTM
+        lstm_input_size = y * x
+
+        # LSTM to process the historical data
+        self.lstm = nn.LSTM(input_size=lstm_input_size, hidden_size=256, batch_first=True)
+
+        # Adding player identifier vector size (num_players)
+        input_size = self.non_hist * y * x + 256 + num_players  # +256 for the LSTM output, +num_players for player identifier
+
+        # Define the sizes of layers in the network
+        hidden_size = 512
+
+        # Fully connected layers
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, hidden_size)
+        self.fc4 = nn.Linear(hidden_size, hidden_size)
+        self.fc5 = nn.Linear(hidden_size, hidden_size)
+        self.fc6 = nn.Linear(hidden_size, hidden_size)
+        self.fc7 = nn.Linear(hidden_size, v)
+        self.flatten = nn.Flatten()
+
+    def forward(self, x, player_id):
+        # Process historical data
+        historical_data = x[:, self.non_hist-1:self.non_hist-1+self.nhist, :, :]
+        historical_data = historical_data.flip(dims=[1])
+        historical_data = historical_data.reshape(-1, self.nhist, self.y * self.x)
+        lstm_out, _ = self.lstm(historical_data)
+        lstm_out = lstm_out[:, -1, :]  # Use only the last output of the LSTM
+
+        # Process non-historical data
+        non_historical_data = torch.cat((x[:, :self.non_hist-1, :, :], x[:, self.non_hist-1+self.nhist:, :, :]), dim=1)
+        non_historical_data = non_historical_data.reshape(-1, non_historical_data.shape[1] * self.y * self.x)
+
+        # Concatenate LSTM output, non-historical data, and player identifier
+        player_id = player_id.reshape(-1, player_id.shape[1])  # Ensure player_id is correctly shaped
+        #print(lstm_out.shape,non_historical_data.shape,player_id.shape)
+        x = torch.cat((lstm_out, non_historical_data, player_id), dim=1)
+
+        # Feed through the fully connected layers
+        x = self.flatten(x)
+        x = F.relu(self.fc1(x))
+        x1 = x
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = x + x1
+        x1 = x
+        x = F.relu(self.fc4(x))
+        x = F.relu(self.fc5(x))
+        x = x + x1
+        x = F.relu(self.fc6(x))
+        x = torch.sigmoid(self.fc7(x))
+        return x
