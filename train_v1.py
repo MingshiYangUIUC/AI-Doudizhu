@@ -40,15 +40,6 @@ def train_model(device, model, criterion, loader, nep, optimizer):
         print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
     return model
 
-def train_worker(Xbuffer_slice, Ybuffer_slice, model, batch_size, n_worker, LR, l2_reg_strength, nepoch, device):
-    train_dataset = TensorDataset(torch.concat(Xbuffer_slice), torch.concat(Ybuffer_slice).unsqueeze(1))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-    
-    opt = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=l2_reg_strength)
-    model = train_model(device, model, nn.MSELoss(), train_loader, nepoch, opt)
-    
-    del train_dataset, train_loader
-    return model
 
 #@profile
 def worker(task_params):
@@ -57,39 +48,8 @@ def worker(task_params):
         torch.set_num_interop_threads(1)
     models, rand_param, selfplay_device, N_history, chunksize, ip, npr = task_params
 
-    #models[0].to(selfplay_device)
-    #models[1].to(selfplay_device)
-    #models[2].to(selfplay_device)
-
     results = []
 
-    '''
-    t0 = time.perf_counter()
-    with torch.no_grad():
-        for _ in range(chunksize):
-            percentage = int((_+1)/chunksize*100)
-            if percentage > 0:
-                eta = (time.perf_counter()-t0)/percentage*100
-                print('-'*percentage+'_'*(100-percentage) + f' ETA: {round(eta)}  ',end='\r')
-            result = simEpisode_softmax(models, rand_param, selfplay_device, N_history)
-            results.append(result)
-    '''
-    '''
-    ngame = 100
-    clist = [ngame for i in range(0,chunksize,ngame)]
-    clist[-1] = chunksize%ngame
-    with torch.no_grad():
-        if ip == npr-1:
-            for c in tqdm(clist, desc="Processing batches"):
-                torch.cuda.empty_cache()
-                results += simEpisode_batch_softmax(models, rand_param, selfplay_device, N_history, c)
-                #print(len(results), chunksize, '    ', end='\r')
-        else:
-            for c in clist:
-                torch.cuda.empty_cache()
-                results += simEpisode_batch_softmax(models, rand_param, selfplay_device, N_history, c)
-                #print(len(results), chunksize, '    ', end='\r')
-    '''
     results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, N_history, 64, chunksize.item())
     return results
 
@@ -120,14 +80,25 @@ if __name__ == '__main__':
 
     N_history = 15 # number of historic moves in model input
     N_feature = 5
+    version = f'H{str(N_history).zfill(2)}-V5.0'
 
     LM, DM, UM = Network_V3(N_history+N_feature),Network_V3(N_history+N_feature),Network_V3(N_history+N_feature)
     #print(LM.nhist)
     print('Init wt',LM.fc2.weight.data[0].mean())
 
-    Total_episodes = 0 # current episode / model version
-    Max_episodes   = 1000 # episode to stop. multiple of 50000
-    N_episodes     = 1000 # number of games to be played before each round of training
+    if sys.argv[1] == '-a': # auto detect
+        mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if version in f]
+        #print(mfiles)
+        Total_episodes = max(mfiles)
+        Add_episodes = int(sys.argv[2])
+        Max_episodes = Total_episodes + Add_episodes
+        #quit()
+    else: # manual entry
+        Total_episodes = 0 # current episode / model version
+        Max_episodes   = 500000 # episode to stop. multiple of 50000
+    print('B',Total_episodes, 'E',Max_episodes)
+    
+    N_episodes     = 12500 # number of games to be played before each round of training
 
     Save_frequency = 50000
 
@@ -137,13 +108,11 @@ if __name__ == '__main__':
     transfer = False
     transfer_name = ''
 
-    version = f'H{str(N_history).zfill(2)}-V5'
-
     batch_size = 64
     nepoch = 1
-    LR = 0.00003
+    LR = 0.0001
     l2_reg_strength = 0
-    rand_param = 1 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
+    rand_param = 0.03 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
 
     n_past_ds = 0 # augment using since last NP datasets.
     n_choice_ds = 0 # choose NC from last NP datasets
@@ -207,8 +176,7 @@ if __name__ == '__main__':
         del results, tasks, chunk
 
         print([len(_) for _ in Ybuffer],'L WR:',round((Lwin/N_episodes).item()*100,2))
-        print(torch.concat(list(Ybuffer[0])).shape)
-        quit()
+
         # train landlord
         train_dataset = TensorDataset(torch.concat(list(Xbuffer[0])), torch.concat(list(Ybuffer[0])).unsqueeze(1))
         torch.save(train_dataset,os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-N_episodes).zfill(10)}_{N_episodes}'))
@@ -226,7 +194,7 @@ if __name__ == '__main__':
     
         print(len(train_dataset))
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.Adam(LM.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.RMSprop(LM.parameters(), lr=LR, weight_decay=l2_reg_strength)
         LM = train_model('cuda', LM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         LM.to(device)
         print('Sample wt',LM.fc2.weight.data[0].mean())
@@ -249,7 +217,7 @@ if __name__ == '__main__':
         except:pass
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.Adam(DM.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.RMSprop(DM.parameters(), lr=LR, weight_decay=l2_reg_strength)
         DM = train_model('cuda', DM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         DM.to(device)
 
@@ -271,7 +239,7 @@ if __name__ == '__main__':
         except:pass
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.Adam(UM.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.RMSprop(UM.parameters(), lr=LR, weight_decay=l2_reg_strength)
         UM = train_model('cuda', UM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         UM.to(device)
 
