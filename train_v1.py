@@ -86,16 +86,17 @@ if __name__ == '__main__':
     #print(LM.nhist)
     print('Init wt',LM.fc2.weight.data[0].mean())
 
-    if sys.argv[1] == '-a': # auto detect
-        mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if version in f]
-        #print(mfiles)
-        Total_episodes = max(mfiles)
-        Add_episodes = int(sys.argv[2])
-        Max_episodes = Total_episodes + Add_episodes
-        #quit()
-    else: # manual entry
+    try:
+        if sys.argv[1] == '-a': # auto detect
+            mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if version in f]
+            #print(mfiles)
+            Total_episodes = max(mfiles)
+            Add_episodes = int(sys.argv[2])
+            Max_episodes = Total_episodes + Add_episodes
+            #quit()
+    except: # manual entry
         Total_episodes = 0 # current episode / model version
-        Max_episodes   = 500000 # episode to stop. multiple of 50000
+        Max_episodes   = 10000 # episode to stop. multiple of 50000
     print('B',Total_episodes, 'E',Max_episodes)
     
     N_episodes     = 12500 # number of games to be played before each round of training
@@ -111,11 +112,11 @@ if __name__ == '__main__':
     batch_size = 64
     nepoch = 1
     LR = 0.0001
-    l2_reg_strength = 0
+    l2_reg_strength = 1e-6
     rand_param = 0.03 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
 
-    n_past_ds = 0 # augment using since last NP datasets.
-    n_choice_ds = 0 # choose NC from last NP datasets
+    n_past_ds = 10 # augment using since last NP datasets.
+    n_choice_ds = 1 # choose NC from last NP datasets
 
     n_worker = 0 # default dataloader
 
@@ -189,12 +190,12 @@ if __name__ == '__main__':
         del ds
         # remove last 11+
         try:
-            os.remove(os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-n_past_ds+1*N_episodes).zfill(10)}_{N_episodes}'))
+            os.remove(os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-(n_past_ds+1)*N_episodes).zfill(10)}_{N_episodes}'))
         except:pass
     
         print(len(train_dataset))
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.RMSprop(LM.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.Adam(LM.parameters(), lr=LR, weight_decay=l2_reg_strength)
         LM = train_model('cuda', LM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         LM.to(device)
         print('Sample wt',LM.fc2.weight.data[0].mean())
@@ -213,11 +214,11 @@ if __name__ == '__main__':
         del ds
         # remove last 11+
         try:
-            os.remove(os.path.join(wd,'train',f'Dtrain_{str(Total_episodes-n_past_ds+1*N_episodes).zfill(10)}_{N_episodes}'))
+            os.remove(os.path.join(wd,'train',f'Dtrain_{str(Total_episodes-(n_past_ds+1)*N_episodes).zfill(10)}_{N_episodes}'))
         except:pass
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.RMSprop(DM.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.Adam(DM.parameters(), lr=LR, weight_decay=l2_reg_strength)
         DM = train_model('cuda', DM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         DM.to(device)
 
@@ -235,11 +236,11 @@ if __name__ == '__main__':
         del ds
         # remove last 11+
         try:
-            os.remove(os.path.join(wd,'train',f'Utrain_{str(Total_episodes-n_past_ds+1*N_episodes).zfill(10)}_{N_episodes}'))
+            os.remove(os.path.join(wd,'train',f'Utrain_{str(Total_episodes-(n_past_ds+1)*N_episodes).zfill(10)}_{N_episodes}'))
         except:pass
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.RMSprop(UM.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.Adam(UM.parameters(), lr=LR, weight_decay=l2_reg_strength)
         UM = train_model('cuda', UM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         UM.to(device)
 

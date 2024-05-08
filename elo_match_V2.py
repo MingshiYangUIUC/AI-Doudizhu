@@ -8,8 +8,8 @@ from itertools import combinations
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
-from base_funcs import *
-from model import *
+from base_funcs_V2 import *
+from model_V2 import *
 
 from collections import deque
 from torch.multiprocessing import Pool
@@ -65,8 +65,8 @@ def psuedomatch(player1,player2):
 def simEpisode_notrain(Initstates, Models, temperature, verbose=0):
     if Initstates is None:
         Initstates = init_game_3card() # [Lstate, Dstate, Ustate]
-    
-    maxhist = max([m.nhist for m in Models])
+
+    maxhist = 15
 
     unavail = ''
     history = torch.zeros((maxhist,4,15))
@@ -82,9 +82,11 @@ def simEpisode_notrain(Initstates, Models, temperature, verbose=0):
     while True: # game loop
         # get player
         #print(Turn, lastmove)
-        player, model = Initstates[Turn%3], Models[Turn%3]
+        player = Initstates[Turn%3]
         visible = Initstates[-1]
-        nhistory = model.nhist
+
+        slm,qv = Models[Turn%3]
+
         # get card count
         card_count = [int(p.sum()) for p in Initstates]
         #print(card_count)
@@ -95,17 +97,25 @@ def simEpisode_notrain(Initstates, Models, temperature, verbose=0):
         #print(CC)
 
         # get action
-        Bigstate = torch.concat([player.unsqueeze(0),str2state(unavail).unsqueeze(0),CC.unsqueeze(0),visible.unsqueeze(0),
-                                 history])
-
-        # get all actions
-        acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],Forcemove)
+        Bigstate = torch.cat([player.unsqueeze(0),
+                                  str2state(unavail).unsqueeze(0),
+                                  CC.unsqueeze(0),
+                                  visible.unsqueeze(0), # new feature
+                                  history])
 
         # generate inputs
-        hinput = torch.concat([torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)]).unsqueeze(0) for a in acts])
+        hinput = Bigstate.unsqueeze(0)
+        model_inter = slm(hinput)
+        role = torch.zeros((model_inter.shape[0],15)) + Turn%3
+        
+        # get all actions
+        acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],Forcemove)
+        # generate inputs 2
+        model_inter = torch.concat([hinput[:,0].sum(dim=-2),model_inter,role],dim=-1)
+        model_input2 = torch.stack([torch.cat((model_inter.flatten(),str2state(a[0]).sum(dim=0))) for a in acts])
 
         # get q values
-        output = model(hinput).flatten()
+        output = qv(model_input2).flatten()
         #print(output)
         if temperature == 0:
             Q = torch.max(output)
@@ -181,18 +191,19 @@ def simulate_match_wrapper(args): # dual match
     if torch.get_num_threads() > 1:
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
+
     p1, p2, models = args
     
     Deck = init_game_3card()
     pair = []
 
-    players = [models[p1][0],models[p2][1],models[p2][2]]
+    players = [models[p1],models[p2],models[p2]]
     match_result = simEpisode_notrain([i.clone().detach() for i in Deck], players, 0.0, 0)
     match_result = int(match_result % 3 == 0)
     print(p1, p2, match_result)
     pair.append((p1, p2, match_result))
 
-    players = [models[p2][0],models[p1][1],models[p1][2]]
+    players = [models[p2],models[p1],models[p1]]
     match_result = simEpisode_notrain([i.clone().detach() for i in Deck], players, 0.0, 0)
     match_result = int(match_result % 3 == 0)
     print(p2, p1, match_result)
@@ -205,24 +216,19 @@ if __name__ == '__main__':
     eval_device = 'cpu'
     device = 'cpu'
 
-    mp.set_start_method('spawn', force=True)
-
     if torch.get_num_threads() > 1:
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
-
-
+    
+    mp.set_start_method('spawn', force=True)
     
     # determine which models participate in the contest
-    nsim = 3000
+    nsim = 2000
     num_processes = 20
 
-    players = ['0002000000']#,'0000100000','0000150000','0000200000']
-    players = [str(i).zfill(10) for i in range(500000,5000000+1,500000)]
-    versions = ['H15-V5.0']#,'H06-V3']#,'H12-V1']#,'H06-V2']
+    players = [str(i).zfill(10) for i in range(6000000,7000000+1,1000000)]
+    versions = ['H15-V2_0.0']
 
-    '''players = [str(i).zfill(3) for i in range(9,300,20)]
-    versions = ['res-v1']#,'H06-V3']#,'H12-V1']#,'H06-V2']'''
 
     models = []
     nplayer = len(players)*len(versions)
@@ -231,22 +237,18 @@ if __name__ == '__main__':
         fullplayers += players
     for session in players:
         for version in versions:
-            try:
-                N_history = int(version[1:3])
-            except:
-                N_history = 6
-            
-            LM, DM, UM = Network_V3(N_history+5),Network_V3(N_history+5),Network_V3(N_history+5)
 
-            #try:
-            LM.load_state_dict(torch.load(os.path.join(wd,'models',f'LM_{version}_{str(session).zfill(3)}.pt')))
-            DM.load_state_dict(torch.load(os.path.join(wd,'models',f'DM_{version}_{str(session).zfill(3)}.pt')))
-            UM.load_state_dict(torch.load(os.path.join(wd,'models',f'UM_{version}_{str(session).zfill(3)}.pt')))
-            LM.eval()
-            DM.eval()
-            UM.eval()
+            SLM = Network_Pcard(19)#,Network_Pcard(N_history+4),Network_Pcard(N_history+4)
+            QV = Network_Qv_Universal(5)
+
+            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+
+            SLM.eval()
+            QV.eval()
+
             models.append(
-                [LM, DM, UM]
+                [SLM,QV]
                 )
     
     ax_player = list(range(nplayer))
@@ -273,9 +275,7 @@ if __name__ == '__main__':
         ngames = np.zeros(nplayer,dtype=np.int64)
         pass
 
-
     print(csim)
-
 
     tasks = []
     for _ in range(nsim):

@@ -181,7 +181,7 @@ if __name__ == '__main__':
         del ds
         # remove last 11+
         try:
-            os.remove(os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-n_past_ds+1*N_episodes).zfill(10)}_{N_episodes}'))
+            os.remove(os.path.join(wd,'train',f'Ltrain_{str(Total_episodes-(n_past_ds+1)*N_episodes).zfill(10)}_{N_episodes}'))
         except:pass
 
         print(len(train_dataset))

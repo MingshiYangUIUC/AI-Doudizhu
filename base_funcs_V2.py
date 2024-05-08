@@ -5,7 +5,7 @@ from itertools import combinations
 import time
 import os
 import sys
-from model import *
+from model_V2 import *
 import numpy as np
 
 r2c_base = {0:'3',
@@ -34,14 +34,6 @@ def emptystate():
 
 def emptystate_npy():
     return np.zeros((4,15),dtype=np.float32)
-
-'''def state2str(state):
-    st = ''
-    for i in range(15):
-        for j in range(4):
-            if state[j][i]:
-                st += r2c_base[i]
-    return st'''
 
 #@profile
 def state2str(Nelems):
@@ -80,13 +72,6 @@ def str2state(st):
 
 # create action based on last state
 # create type along with action!
-def all_bombs(mystate):
-    out = [[r2c_base[i]*4,(4,i)] for i in range(15) if mystate[:,i].sum() == 4]
-    if mystate[-1,-2:].sum() == 2:
-        return out + [['BR',(4,13)]]
-    else:
-        return out
-
 def all_bombs_new(Nelems):
     quad = r2c_base_arr[Nelems==4]
     out = [[Q*4,(4,c2r_base[Q[0]])] for Q in quad]
@@ -99,7 +84,7 @@ def all_bombs_new(Nelems):
 
 #@profile
 def all_actions(mystate,forcemove=0):
-    # mystate = str2state('3334555567777XXJ22')
+    #mystate = str2state('3334555567777XXJ22')
     # opinfo is (type, rank)
     # action is string of stuff '34567' or 'BR' for black.red joker
     # return as "action, type, rank"
@@ -471,479 +456,6 @@ def cards2action(cards):
     return None  # Unknown or more complex pattern
 
 
-def init_game():
-    st = '3333444455556666777788889999XXXXJJJJQQQQKKKKAAAA2222BR'
-    idx = list(range(54))
-    random.shuffle(idx)
-    L = ''.join([st[i] for i in idx[:20]])
-    U = ''.join([st[i] for i in idx[20:37]])
-    D = ''.join([st[i] for i in idx[37:]])
-    Lst = str2state(L)
-    Ust = str2state(U)
-    Dst = str2state(D)
-    return [Lst,Ust,Dst]
-
-
-def get_Bigstate(mystate, unavail, cardcount, history):
-    # my current cards (tensor)
-    # cards already played (string)
-    # count of cards (>15: 15) first row L, second D, thrid U
-    # 6 historical moves (tensor, all 0 if invalid / pass)
-    return torch.concat([mystate.unsqueeze(0),str2state(unavail).unsqueeze(0),cardcount.unsqueeze(0),history])
-
-def get_action(Bigstate, lastmove, model, forcemove, epsilon=0.25, selfplay_device='cpu', return_q = False):
-    # model to device outside of this function
-
-    # my Bigstate
-    # lastmove in the action format
-
-    # get all actions
-    acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],forcemove)
-    #print(len(acts))
-    if len(acts) > 1 or return_q:
-        # generate inputs
-        #Bigstate = torch.concat([mystate.unsqueeze(0),str2state(unavail).unsqueeze(0),history])
-        #print(hinput.shape)
-        hinput = torch.concat([torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)]).unsqueeze(0) for a in acts])
-        #print(hinput.shape)
-
-        # epsilon randomize
-        if random.uniform(0,1) >= epsilon:
-            # get q values
-            output = model(hinput.to(selfplay_device)).to('cpu').flatten()
-            '''t0 = time.time()
-            for i in range(100):
-                output = model(hinput.to(selfplay_device)).to('cpu').flatten()
-            t1 = time.time()
-            model.to(torch.float16)
-            t2 = time.time()
-            for i in range(100):
-                output = model(hinput.to(torch.float16).to(selfplay_device)).to('cpu').flatten().to(torch.float32)
-            t3 = time.time()
-            model.to(torch.float32)
-            print(t1-t0,t3-t2)'''
-        else:
-            output = torch.rand(len(acts))
-
-        # get action using probabilistic approach?
-        # probabilities = torch.softmax(output / epsilon, dim=0)
-        # distribution = torch.distributions.Categorical(probabilities)
-        # best_act = distribution.sample()
-
-        best_act = acts[torch.argmax(output)]
-        #print(best_act)
-        
-        if return_q:
-            return best_act, torch.max(output)
-        else:
-            return best_act
-    else:
-        return acts[0]
-
-def simEpisode(Models, epsilon, selfplay_device, Nhistory=6):
-    Init_states = init_game() # [Lstate, Dstate, Ustate]
-
-    unavail = ''
-    history = torch.zeros((Nhistory,4,15))
-    lastmove = ['',(0,0)]
-
-    Turn = 0
-    Npass = 0 # number of pass applying to rules
-    Cpass = 0 # continuous pass
-    Condition = 0
-
-    Forcemove = True # whether pass is not allowed
-
-    BufferStatesActs = [[],[],[]] # states_actions for 3 players
-    #BufferActions = [[],[],[]] # actions for 3 players
-    BufferRewards = [[],[],[]] # rewards for 3 players
-
-    Models[0].to(selfplay_device)
-    Models[1].to(selfplay_device)
-    Models[2].to(selfplay_device)
-
-    while True: # game loop
-        # get player
-        #print(Turn, lastmove)
-        player, model = Init_states[Turn%3], Models[Turn%3]
-
-        # get card count
-        card_count = [int(p.sum()) for p in Init_states]
-        #print(card_count)
-        CC = torch.zeros((4,15))
-        CC[0][:min(card_count[0],15)] = 1
-        CC[1][:min(card_count[1],15)] = 1
-        CC[2][:min(card_count[2],15)] = 1
-        #print(CC)
-
-        # get action
-        Bigstate = get_Bigstate(player,unavail,CC,history)
-        action = get_action(Bigstate,lastmove,model,Forcemove,epsilon,selfplay_device,False)
-        
-        if Forcemove:
-            Forcemove = False
-
-        # conduct a move
-        myst = state2str(player.sum(dim=0).numpy())
-        cA = Counter(myst)
-        cB = Counter(action[0])
-        newst = ''.join(list((cA - cB).elements()))
-        newunavail = unavail + action[0]
-        newhist = torch.roll(history,1,dims=0)
-        newhist[0] = str2state(action[0]) # first row is newest, others are moved downward
-        
-        #newlast = ['',(0,0)]
-        play = action[0]
-        if action[1][0] == 0:
-            play = 'PASS'
-            Cpass += 1
-            if Npass < 1:
-                Npass += 1
-            else:
-                #print('Clear Action')
-                newlast = ['',(0,0)]
-                Npass = 0
-                Forcemove = True
-        else:
-            newlast = action
-            Npass = 0
-            Cpass = 0
-
-        #myst, action[0], newst, newunavail, newhist[0], newlast
-        #print(Label[Turn%3], str(Turn).zfill(3), myst.zfill(20).replace('0',' '), play.zfill(20).replace('0',' '), Npass, Cpass)
-
-        # record
-        nextstate = str2state(newst)
-
-        BufferStatesActs[Turn%3].append(torch.concat([Bigstate.clone().detach(),newhist[0].clone().detach().unsqueeze(0)]).unsqueeze(0))
-        #BufferActions[Turn%3].append(newhist[0].clone().detach())
-        BufferRewards[Turn%3].append(0)
-        
-
-        # update
-        Init_states[Turn%3] = nextstate
-        unavail = newunavail
-        history = newhist
-        lastmove = newlast
-        
-        if len(newst) == 0:
-            Condition = 1
-            BufferRewards[Turn%3] = [torch.as_tensor(BufferRewards[Turn%3],dtype=torch.float32)+1]
-            if Turn%3 == 1:
-                BufferRewards[Turn%3+1] = [torch.as_tensor(BufferRewards[Turn%3+1],dtype=torch.float32)+1]
-                BufferRewards[Turn%3-1] = [torch.as_tensor(BufferRewards[Turn%3-1],dtype=torch.float32)]
-            elif Turn%3 == 2:
-                BufferRewards[Turn%3-1] = [torch.as_tensor(BufferRewards[Turn%3-1],dtype=torch.float32)+1]
-                BufferRewards[Turn%3-2] = [torch.as_tensor(BufferRewards[Turn%3-2],dtype=torch.float32)]
-            elif Turn%3 == 0:
-                BufferRewards[Turn%3+1] = [torch.as_tensor(BufferRewards[Turn%3+1],dtype=torch.float32)]
-                BufferRewards[Turn%3+2] = [torch.as_tensor(BufferRewards[Turn%3+2],dtype=torch.float32)]
-            break
-
-        Turn += 1
-
-    #if Condition == 1:
-    #    print(f'Player {Label[Turn%3]} Win')
-    #print(len(BufferStatesActs[0]),len(BufferRewards[0]))
-    #quit()
-    try:
-        SA = [[torch.concat(_)] for _ in BufferStatesActs]
-        return SA, BufferRewards, True
-    except:
-        #print([_ for _ in BufferStatesActs])
-        return None,None, False
-
-def get_action_softmax(Bigstate, lastmove, model, forcemove, temperature=1, selfplay_device='cpu', return_q = False):
-    # model to device outside of this function
-
-    # my Bigstate
-    # lastmove in the action format
-
-    # get all actions
-    acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],forcemove)
-    #print(len(acts))
-    if len(acts) > 1 or return_q:
-        # generate inputs
-        hinput = torch.concat([torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)]).unsqueeze(0) for a in acts])
-
-        # get q values
-        output = model(hinput.to(selfplay_device)).to('cpu').flatten()
-
-        if temperature == 0:
-            q = torch.max(output)
-            best_act = acts[torch.argmax(output)]
-        else:
-            # get action using probabilistic approach and temperature
-            probabilities = torch.softmax(output / temperature, dim=0)
-            distribution = torch.distributions.Categorical(probabilities)
-            
-            q = distribution.sample()
-            best_act = acts[q]
-            q = output[q]
-        
-        if return_q:
-            return best_act, q
-        else:
-            return best_act
-    else:
-        return acts[0]
-
-def simEpisode_softmax(Models, temperature, selfplay_device, Nhistory=6):
-    Init_states = init_game() # [Lstate, Dstate, Ustate]
-
-    unavail = ''
-    history = torch.zeros((Nhistory,4,15))
-    lastmove = ['',(0,0)]
-
-    Turn = 0
-    Npass = 0 # number of pass applying to rules
-    Cpass = 0 # continuous pass
-    Condition = 0
-
-    Forcemove = True # whether pass is not allowed
-
-    BufferStatesActs = [[],[],[]] # states_actions for 3 players
-    #BufferActions = [[],[],[]] # actions for 3 players
-    BufferRewards = [[],[],[]] # rewards for 3 players
-
-    #Models[0].to(selfplay_device)
-    #Models[1].to(selfplay_device)
-    #Models[2].to(selfplay_device)
-
-    while True: # game loop
-        # get player
-        #print(Turn, lastmove)
-        player, model = Init_states[Turn%3], Models[Turn%3]
-
-        # get card count
-        card_count = [int(p.sum()) for p in Init_states]
-        #print(card_count)
-        CC = torch.zeros((4,15))
-        CC[0][:min(card_count[0],15)] = 1
-        CC[1][:min(card_count[1],15)] = 1
-        CC[2][:min(card_count[2],15)] = 1
-        #print(CC)
-
-        # get action
-        Bigstate = get_Bigstate(player,unavail,CC,history)
-        action = get_action_softmax(Bigstate,lastmove,model,Forcemove,temperature,selfplay_device,False)
-        
-        if Forcemove:
-            Forcemove = False
-
-        # conduct a move
-        myst = state2str(player.sum(dim=0).numpy())
-        cA = Counter(myst)
-        cB = Counter(action[0])
-        newst = ''.join(list((cA - cB).elements()))
-        newunavail = unavail + action[0]
-        newhist = torch.roll(history,1,dims=0)
-        newhist[0] = str2state(action[0]) # first row is newest, others are moved downward
-        
-        #newlast = ['',(0,0)]
-        play = action[0]
-        if action[1][0] == 0:
-            play = 'PASS'
-            Cpass += 1
-            if Npass < 1:
-                Npass += 1
-            else:
-                #print('Clear Action')
-                newlast = ['',(0,0)]
-                Npass = 0
-                Forcemove = True
-        else:
-            newlast = action
-            Npass = 0
-            Cpass = 0
-
-        #myst, action[0], newst, newunavail, newhist[0], newlast
-        #print(Label[Turn%3], str(Turn).zfill(3), myst.zfill(20).replace('0',' '), play.zfill(20).replace('0',' '), Npass, Cpass)
-
-        # record
-        nextstate = str2state(newst)
-
-        BufferStatesActs[Turn%3].append(torch.concat([Bigstate.clone().detach(),newhist[0].clone().detach().unsqueeze(0)]).unsqueeze(0))
-        #BufferActions[Turn%3].append(newhist[0].clone().detach())
-        BufferRewards[Turn%3].append(0)
-        
-
-        # update
-        Init_states[Turn%3] = nextstate
-        unavail = newunavail
-        history = newhist
-        lastmove = newlast
-        
-        if len(newst) == 0:
-            Condition = 1
-            BufferRewards[Turn%3] = [torch.as_tensor(BufferRewards[Turn%3],dtype=torch.float32)+1]
-            if Turn%3 == 1:
-                BufferRewards[Turn%3+1] = [torch.as_tensor(BufferRewards[Turn%3+1],dtype=torch.float32)+1]
-                BufferRewards[Turn%3-1] = [torch.as_tensor(BufferRewards[Turn%3-1],dtype=torch.float32)]
-            elif Turn%3 == 2:
-                BufferRewards[Turn%3-1] = [torch.as_tensor(BufferRewards[Turn%3-1],dtype=torch.float32)+1]
-                BufferRewards[Turn%3-2] = [torch.as_tensor(BufferRewards[Turn%3-2],dtype=torch.float32)]
-            elif Turn%3 == 0:
-                BufferRewards[Turn%3+1] = [torch.as_tensor(BufferRewards[Turn%3+1],dtype=torch.float32)]
-                BufferRewards[Turn%3+2] = [torch.as_tensor(BufferRewards[Turn%3+2],dtype=torch.float32)]
-            break
-
-        Turn += 1
-
-    #if Condition == 1:
-    #    print(f'Player {Label[Turn%3]} Win')
-    #print(len(BufferStatesActs[0]),len(BufferRewards[0]))
-    #quit()
-    try:
-        SA = [[torch.concat(_)] for _ in BufferStatesActs]
-        return SA, BufferRewards, True
-    except:
-        #print([_ for _ in BufferStatesActs])
-        return None,None, False
-
-def simEpisode_serial_softmax(Models, temperature, selfplay_device, Nhistory=6):
-    Init_states = init_game() # [Lstate, Dstate, Ustate]
-
-    unavail = ''
-    history = torch.zeros((Nhistory,4,15))
-    lastmove = ['',(0,0)]
-
-    Turn = 0
-    Npass = 0 # number of pass applying to rules
-    Cpass = 0 # continuous pass
-
-    Forcemove = True # whether pass is not allowed
-
-    BufferStatesActs = [[],[],[]] # states_actions for 3 players
-    BufferRewards = [[],[],[]] # rewards for 3 players
-
-    Models[0].to(selfplay_device)
-    Models[1].to(selfplay_device)
-    Models[2].to(selfplay_device)
-
-    while True: # game loop
-        # get player
-        #print(Turn, lastmove)
-        player, model = Init_states[Turn%3], Models[Turn%3]
-
-        # get card count
-        card_count = [int(p.sum()) for p in Init_states]
-        #print(card_count)
-        CC = torch.zeros((4,15))
-        CC[0][:min(card_count[0],15)] = 1
-        CC[1][:min(card_count[1],15)] = 1
-        CC[2][:min(card_count[2],15)] = 1
-        #print(CC)
-
-        # get action
-        Bigstate = torch.concat([player.unsqueeze(0),str2state(unavail).unsqueeze(0),CC.unsqueeze(0),history])
-        #action = get_action_softmax(Bigstate,lastmove,model,Forcemove,temperature,selfplay_device,False)
-
-        #def get_action_softmax(Bigstate, lastmove, model, forcemove, temperature=1, selfplay_device='cpu', return_q = False):
-        # model to device outside of this function
-
-        # my Bigstate
-        # lastmove in the action format
-
-        # get all actions
-        acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],Forcemove)
-        #print(len(acts))
-        if len(acts) > 1:
-            # generate inputs
-            hinput = torch.concat([torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)]).unsqueeze(0) for a in acts])
-            
-            # get q values
-            output = model(hinput.to(selfplay_device)).to('cpu').flatten()
-
-            if temperature == 0:
-                q = torch.max(output)
-                best_act = acts[torch.argmax(output)]
-            else:
-                # get action using probabilistic approach and temperature
-                probabilities = torch.softmax(output / temperature, dim=0)
-                distribution = torch.distributions.Categorical(probabilities)
-                
-                q = distribution.sample()
-                best_act = acts[q]
-                #q = output[q]
-            
-            action = best_act
-        else:
-            action = acts[0]
-        
-        if Forcemove:
-            Forcemove = False
-
-        # conduct a move
-        myst = state2str(player.sum(dim=0).numpy())
-        cA = Counter(myst)
-        cB = Counter(action[0])
-        newst = ''.join(list((cA - cB).elements()))
-        newunavail = unavail + action[0]
-        newhist = torch.roll(history,1,dims=0)
-        newhist[0] = str2state(action[0]) # first row is newest, others are moved downward
-        
-        #newlast = ['',(0,0)]
-        play = action[0]
-        if action[1][0] == 0:
-            play = 'PASS'
-            Cpass += 1
-            if Npass < 1:
-                Npass += 1
-            else:
-                #print('Clear Action')
-                newlast = ['',(0,0)]
-                Npass = 0
-                Forcemove = True
-        else:
-            newlast = action
-            Npass = 0
-            Cpass = 0
-
-        #myst, action[0], newst, newunavail, newhist[0], newlast
-        #print(Label[Turn%3], str(Turn).zfill(3), myst.zfill(20).replace('0',' '), play.zfill(20).replace('0',' '), Npass, Cpass)
-
-        # record
-        nextstate = str2state(newst)
-
-        BufferStatesActs[Turn%3].append(torch.concat([Bigstate.clone().detach(),newhist[0].clone().detach().unsqueeze(0)]).unsqueeze(0))
-        #BufferActions[Turn%3].append(newhist[0].clone().detach())
-        BufferRewards[Turn%3].append(0)
-        
-
-        # update
-        Init_states[Turn%3] = nextstate
-        unavail = newunavail
-        history = newhist
-        lastmove = newlast
-        
-        if len(newst) == 0:
-            BufferRewards[Turn%3] = [torch.as_tensor(BufferRewards[Turn%3],dtype=torch.float32)+1]
-            if Turn%3 == 1:
-                BufferRewards[Turn%3+1] = [torch.as_tensor(BufferRewards[Turn%3+1],dtype=torch.float32)+1]
-                BufferRewards[Turn%3-1] = [torch.as_tensor(BufferRewards[Turn%3-1],dtype=torch.float32)]
-            elif Turn%3 == 2:
-                BufferRewards[Turn%3-1] = [torch.as_tensor(BufferRewards[Turn%3-1],dtype=torch.float32)+1]
-                BufferRewards[Turn%3-2] = [torch.as_tensor(BufferRewards[Turn%3-2],dtype=torch.float32)]
-            elif Turn%3 == 0:
-                BufferRewards[Turn%3+1] = [torch.as_tensor(BufferRewards[Turn%3+1],dtype=torch.float32)]
-                BufferRewards[Turn%3+2] = [torch.as_tensor(BufferRewards[Turn%3+2],dtype=torch.float32)]
-            break
-
-        Turn += 1
-
-    #if Condition == 1:
-    #    print(f'Player {Label[Turn%3]} Win')
-    #print(len(BufferStatesActs[0]),len(BufferRewards[0]))
-    #quit()
-    try:
-        SA = [[torch.concat(_)] for _ in BufferStatesActs]
-        return SA, BufferRewards, True
-    except:
-        #print([_ for _ in BufferStatesActs])
-        return None,None, False
-
-
 def init_game_3card(): # landlord has 3 more cards, which are visible to all
     st = '3333444455556666777788889999XXXXJJJJQQQQKKKKAAAA2222BR'
     idx = list(range(54))
@@ -958,15 +470,16 @@ def init_game_3card(): # landlord has 3 more cards, which are visible to all
     Bst = str2state(B)
     return [Lst,Ust,Dst,Bst]
 
+#@profile
 def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100):
     #print('Init wt',Models[0].fc2.weight.data[0].mean())
     #quit()
-    Models[0].to(selfplay_device)
-    Models[1].to(selfplay_device)
-    Models[2].to(selfplay_device)
+    Models[0].to(selfplay_device)  # SL
+    Models[-1].to(selfplay_device) # QM
 
     Index = torch.arange(ngame)
     Active = [True for _ in range(ngame)]
+    #print(max(Active))
 
     Init_states = [init_game_3card() for _ in range(ngame)] # [Lstate, Dstate, Ustate]
     Visible_states = [ist[-1] for ist in Init_states] # the 3 card matrix
@@ -990,6 +503,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     processed = ngame
 
     #Games = ['' for _ in range(ngame)]
+    SL_X = [] # no order, ok to use one list
+    SL_Y = []
 
     while processed < ntask or True in Active: # game loop
         # serially get all actions and states
@@ -998,11 +513,19 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         model_idxs = []
         acts_list = []
         bstates_list = []
+        sl_y = []
+        
+        model = Models[0]
 
         for iin, _ in enumerate(Index[Active]):
 
             Tidx = Turn[_]%3
-            playerstate, model = Init_states[_][Tidx], Models[Tidx]
+            #playerstate, model = Init_states[_][Tidx], Models[Tidx] # Same model should be used for all Active
+            playerstate = Init_states[_][Tidx]
+            upper_state = Init_states[_][:-1][(Tidx-1)%3].sum(dim=0)
+            lower_state = Init_states[_][:-1][(Tidx+1)%3].sum(dim=0)
+            sl_y.append(torch.cat((upper_state,lower_state)))
+            #print(Turn)
             visible = Visible_states[_] # 3 cards from landlord, fixed for one full game
 
             # get card count
@@ -1015,7 +538,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             # get actions
             acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
 
-            # add actions and visible to big state
+            # add states and visible to big state
             Bigstate = torch.cat([playerstate.unsqueeze(0),
                                   str2state(unavail[_]).unsqueeze(0),
                                   CC.unsqueeze(0),
@@ -1023,36 +546,53 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                                   history[_]])
 
             # generate inputs
-            #hinput = torch.zeros((len(acts),19,4,15))
-            #for i,a in enumerate(acts):
-            #    hinput[i] = torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)])
-            hinput = torch.stack([torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)]) for a in acts])
-            #print(hinput.shape)
-            #quit()
-            model_inputs.append(hinput)
-            model_idxs.append(len(hinput))
-            acts_list += acts
+            hinput = Bigstate.unsqueeze(0)
 
-            bstates_list.append(Bigstate)
+            model_inputs.append(hinput)
+            model_idxs.append(len(acts))
+            acts_list.append(acts)
+
+            #bstates_list.append(Bigstate)
 
         # use all data to run model
         torch.cuda.empty_cache()
-        model_output = model(
-            torch.concat(model_inputs).to(selfplay_device)
-            ).to('cpu').flatten()
+
+        model_inputs = torch.concat(model_inputs)
+
+        # predict state (SL)
+        model_inter = model(
+            model_inputs.to(selfplay_device)
+            ).to('cpu')
+        #print(model_inputs.shape)
+        SL_X.append(model_inputs.clone().detach())
+        SL_Y.append(torch.stack(sl_y))
+        #print(model_inter.shape,torch.stack(sl_y).shape)
+
+        role = torch.zeros((model_inter.shape[0],15)) + Tidx
+
+        model_inter = torch.concat([model_inputs[:,0].sum(dim=-2),model_inter,role],dim=-1)
+        model_input2 = []
+
+        for i, mi in enumerate(model_inter):
+            input_i = torch.stack([torch.cat((mi,str2state(a[0]).sum(dim=0))) for a in acts_list[i]])
+            model_input2.append(input_i)
+            #bstates_list.append(Bigstate)
+        #print(model_inter.shape)
+        #quit()
+        model_output = Models[-1](torch.cat(model_input2).to(selfplay_device)).to('cpu').flatten()
 
         # conduct actions for all instances
         for iout, _ in enumerate(Index[Active]):
             Tidx = Turn[_]%3
             playerstate = Init_states[_][Tidx]
-            Bigstate = bstates_list[iout]
+            #Bigstate = bstates_list[iout]
 
             idx_start = sum(model_idxs[:iout])
             idx_end = sum(model_idxs[:iout+1])
 
             # get q values
             output = model_output[idx_start:idx_end].clone().detach()
-            acts = acts_list[idx_start:idx_end]
+            acts = acts_list[iout]
 
             if temperature == 0:
                 q = torch.max(output)
@@ -1064,6 +604,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 q = distribution.sample()
                 best_act = acts[q]
             
+            #print(torch.argmax(output))
             action = best_act
             
             if Forcemove[_]:
@@ -1093,8 +634,9 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
             # record and update
             nextstate = str2state(newst)
+            #print(newst)
 
-            BufferStatesActs[_][Tidx].append(torch.concat([Bigstate.clone().detach(),newhist[0].clone().detach().unsqueeze(0)]).unsqueeze(0))
+            BufferStatesActs[_][Tidx].append(torch.concat([model_inter[iout].clone().detach(),newhist[0].sum(dim=0).clone().detach()]).unsqueeze(0))
             BufferRewards[_][Tidx].append(0)
 
             Init_states[_][Tidx] = nextstate
@@ -1126,6 +668,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         Turn += 1 # all turn += 1
 
         # if completed games < ntask, reset state for this index, WHEN NEXT TURN IS LANDLORD
+        # if processed < ntask:
         for iout, _ in enumerate(Index):
             while not max(Active) and Turn[_]%3 != 0: # if all games stopped and not landlord turn: just add 1 to turn
                 Turn += 1
@@ -1147,36 +690,61 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 Forcemove[_] = True
                 processed += 1
                 print(str(processed).zfill(5),'/', str(ntask).zfill(5), '   ',end='\r')
-        #print(Turn)
+        #print(Active)
+        #print(processed, ntask, Turn)
 
-    return Full_output
+    return Full_output, torch.cat(SL_X), torch.cat(SL_Y)
 
 
 if __name__ == '__main__':
+    from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
+
+
     wd = os.path.dirname(__file__)
-    Label = ['Landlord','Farmer-0','Farmer-1']
-    N_history = 15 # number of historic moves in model input
-    N_feature = 5
+    Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    LM, DM, UM = Network_V3(N_history+N_feature),Network_V3(N_history+N_feature),Network_V3(N_history+N_feature)
-    v_FM = 'H15-V5.0_0001100000'
-    v_LM = 'H15-V5.0_0001100000'
-    LM.load_state_dict(torch.load(f'models/LM_{v_LM}.pt'))
-    DM.load_state_dict(torch.load(f'models/DM_{v_FM}.pt'))
-    UM.load_state_dict(torch.load(f'models/UM_{v_FM}.pt'))
+    v_M = 'H15-V5.0_0001000000'
+    N_history = int(v_M[1:3])
 
-    LM.eval()
-    DM.eval()
-    UM.eval()
-    LM.to('cuda')
-    DM.to('cuda')
-    UM.to('cuda')
+    SLM = Network_Pcard(N_history+4)#,Network_Pcard(N_history+4),Network_Pcard(N_history+4)
+
+    #LM.load_state_dict(torch.load(os.path.join(wd,'models',f'LM_{v_M}.pt')))
+    #DM.load_state_dict(torch.load(os.path.join(wd,'models',f'DM_{v_M}.pt')))
+    #UM.load_state_dict(torch.load(os.path.join(wd,'models',f'UM_{v_M}.pt')))
+
+    SLM.eval()
+    #DM.eval()
+    #UM.eval()
+
+    QV = Network_Qv_Universal(5)
+
+    QV.eval()
+
     if torch.get_num_threads() > 1: # no auto multi threading
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
 
-    '''#torch.manual_seed(0)
-    for i in range(100):
-        o = simEpisode_serial_softmax([LM,DM,UM], 0, 'cuda', Nhistory=15)'''
-    
-    o = simEpisode_batchpool_softmax([LM,DM,UM], 0, 'cuda', Nhistory=15, ngame=10, ntask=10)
+
+    Xbuffer = [[],[],[]]
+    Ybuffer = [[],[],[]]
+    N_episodes = 100
+    chunk, SL_X, SL_Y = simEpisode_batchpool_softmax([SLM,QV], 0, 'cuda', Nhistory=15, ngame=20, ntask=N_episodes)
+    '''Lwin = 0
+    for BufferStatesActs, BufferRewards, success in chunk:
+        if success:
+            for i in range(3):
+                #print(BufferStatesActs[i].shape)
+                Xbuffer[i].extend(BufferStatesActs[i])
+                Ybuffer[i].extend(BufferRewards[i])
+                if i == 0:
+                    #print(len(Xbuffer[0]),len(Ybuffer[0]))
+                    Lwin += BufferRewards[i][0][0]
+    print([len(_) for _ in Ybuffer],'L WR:',round((Lwin/N_episodes).item()*100,2))
+    print(SL_X.shape,SL_Y.shape)
+
+    train_dataset = TensorDataset(torch.concat(list(Xbuffer[0])), torch.concat(list(Ybuffer[0])).unsqueeze(1))
+    print(len(train_dataset),torch.concat(list(Xbuffer[0])).shape,torch.concat(list(Ybuffer[0])).unsqueeze(1).shape)
+    train_dataset = TensorDataset(torch.concat(list(Xbuffer[1])), torch.concat(list(Ybuffer[1])).unsqueeze(1))
+    print(len(train_dataset))
+    train_dataset = TensorDataset(torch.concat(list(Xbuffer[2])), torch.concat(list(Ybuffer[2])).unsqueeze(1))
+    print(len(train_dataset))'''
