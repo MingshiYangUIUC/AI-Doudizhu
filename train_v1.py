@@ -6,7 +6,6 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
 from base_funcs import *
-from model import *
 #from test_batch_sim import *
 
 from collections import deque
@@ -50,7 +49,7 @@ def worker(task_params):
 
     results = []
 
-    results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, N_history, 64, chunksize.item())
+    results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, N_history, 32, chunksize.item())
     return results
 
 def sampledataset(Total_episodes,N_episodes,N_back,label='L',kk=2):
@@ -72,6 +71,9 @@ def sampledataset(Total_episodes,N_episodes,N_back,label='L',kk=2):
 
 
 if __name__ == '__main__':
+    
+    from model import Network_V3
+
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
 
@@ -80,7 +82,7 @@ if __name__ == '__main__':
 
     N_history = 15 # number of historic moves in model input
     N_feature = 5
-    version = f'H{str(N_history).zfill(2)}-V5.0'
+    version = f'H{str(N_history).zfill(2)}-V0_5.0-Contester'
 
     LM, DM, UM = Network_V3(N_history+N_feature),Network_V3(N_history+N_feature),Network_V3(N_history+N_feature)
     #print(LM.nhist)
@@ -99,11 +101,11 @@ if __name__ == '__main__':
         Max_episodes   = 10000 # episode to stop. multiple of 50000
     print('B',Total_episodes, 'E',Max_episodes)
     
-    N_episodes     = 12500 # number of games to be played before each round of training
+    N_episodes     = 10000 # number of games to be played before each round of training
 
     Save_frequency = 50000
 
-    nprocess = 16 # number of process in selfplay
+    nprocess = 12 # number of process in selfplay
 
     # transfer weights from another version (need same model structure)
     transfer = False
@@ -111,12 +113,12 @@ if __name__ == '__main__':
 
     batch_size = 64
     nepoch = 1
-    LR = 0.0001
+    LR = 0.00001
     l2_reg_strength = 1e-6
     rand_param = 0.03 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
 
     n_past_ds = 10 # augment using since last NP datasets.
-    n_choice_ds = 1 # choose NC from last NP datasets
+    n_choice_ds = 0 # choose NC from last NP datasets
 
     n_worker = 0 # default dataloader
 

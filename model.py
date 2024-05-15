@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from base_funcs import str2state, avail_actions
+
 # network reads in self state, played cards, historical N move, and self action
 # output one value (win rate)
 
@@ -223,3 +225,81 @@ class Network_V3_Unified(nn.Module):
         x = F.relu(self.fc6(x))
         x = torch.sigmoid(self.fc7(x))
         return x
+
+
+# wrapper for network_V2
+
+def get_action_serial_V1_0_0(Turn, model, Initstates,unavail,lastmove, Forcemove, history, temperature):
+    player = Initstates[Turn%3]
+
+    card_count = [int(p.sum()) for p in Initstates]
+    #print(card_count)
+    CC = torch.zeros((4,15))
+    CC[0][:min(card_count[0],15)] = 1
+    CC[1][:min(card_count[1],15)] = 1
+    CC[2][:min(card_count[2],15)] = 1
+    #print(CC)
+
+    # get action
+    Bigstate = torch.concat([player.unsqueeze(0),str2state(unavail).unsqueeze(0),CC.unsqueeze(0),history])
+
+    acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],Forcemove)
+
+    hinput = torch.concat([torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)]).unsqueeze(0) for a in acts])
+
+    output = model(hinput).flatten()
+
+    if temperature == 0:
+        Q = torch.max(output)
+        best_act = acts[torch.argmax(output)]
+    else:
+        # get action using probabilistic approach and temperature
+        probabilities = torch.softmax(output / temperature, dim=0)
+        distribution = torch.distributions.Categorical(probabilities)
+        
+        q = distribution.sample()
+        best_act = acts[q]
+        Q = output[q]
+    
+    action = best_act
+
+    return action, Q
+
+
+def get_action_serial_V1_1_0(Turn, model, Initstates,unavail,lastmove, Forcemove, history, temperature):
+    player = Initstates[Turn%3]
+
+    visible = Initstates[-1]
+
+    card_count = [int(p.sum()) for p in Initstates]
+    #print(card_count)
+    CC = torch.zeros((4,15))
+    CC[0][:min(card_count[0],15)] = 1
+    CC[1][:min(card_count[1],15)] = 1
+    CC[2][:min(card_count[2],15)] = 1
+    #print(CC)
+
+    # get action
+    Bigstate = torch.concat([player.unsqueeze(0),str2state(unavail).unsqueeze(0),CC.unsqueeze(0),visible.unsqueeze(0),history])
+
+    acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],Forcemove)
+
+    hinput = torch.concat([torch.concat([Bigstate,str2state(a[0]).unsqueeze(0)]).unsqueeze(0) for a in acts])
+
+    output = model(hinput).flatten()
+
+    if temperature == 0:
+        Q = torch.max(output)
+        best_act = acts[torch.argmax(output)]
+    else:
+        # get action using probabilistic approach and temperature
+        probabilities = torch.softmax(output / temperature, dim=0)
+        distribution = torch.distributions.Categorical(probabilities)
+        
+        q = distribution.sample()
+        best_act = acts[q]
+        Q = output[q]
+    
+    action = best_act
+
+    return action, Q

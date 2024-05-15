@@ -5,7 +5,7 @@ from itertools import combinations
 import torch
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
-from base_funcs_V2 import *
+from base_funcs_V2_1_1 import *
 from model_V2 import *
 #from test_batch_sim import *
 
@@ -79,8 +79,9 @@ if __name__ == '__main__':
     selfplay_device = 'cuda'
 
     N_history = 15 # number of historic moves in model input
-    N_feature = 4
-    version = f'H{str(N_history).zfill(2)}-V2_0.0'
+    N_feature = 5
+    version = f'H{str(N_history).zfill(2)}-V2_1.2-Contester'
+    #version = f'H{str(N_history).zfill(2)}-V2_1.1'
 
     try:
         if sys.argv[1] == '-a': # auto detect
@@ -98,7 +99,7 @@ if __name__ == '__main__':
     
     print('B',Total_episodes, 'E',Max_episodes)
     
-    N_episodes     = 12500 # number of games to be played before each round of training
+    N_episodes     = 10000 # number of games to be played before each round of training
 
     Save_frequency = 50000
 
@@ -108,11 +109,11 @@ if __name__ == '__main__':
     transfer = False
     transfer_name = ''
 
-    batch_size = 128
+    batch_size = 64
     nepoch = 1
-    LR = 0.0001
+    LR = 0.000005
     l2_reg_strength = 1e-6
-    rand_param = 0.03 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
+    rand_param = 0.01 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
 
     n_past_ds = 10 # augment using since last NP datasets.
     n_choice_ds = 1 # choose NC from last NP datasets
@@ -120,41 +121,36 @@ if __name__ == '__main__':
     n_worker = 0 # default dataloader
 
     #LM, DM, UM = Network_Pcard(N_history+N_feature),Network_Pcard(N_history+N_feature),Network_Pcard(N_history+N_feature)
-    SLM = Network_Pcard(N_history+N_feature)
-    QV = Network_Qv_Universal(5)
+    SLM = Network_Pcard_V1_1(N_history+N_feature, N_feature)
+    QV = Network_Qv_Universal_V1_1(6,15,512)
+
+    #quit()
     #print(LM.nhist)
     print('Init wt',SLM.fc2.weight.data[0].mean())
 
     if Total_episodes > 0:
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
-        #DM.load_state_dict(torch.load(os.path.join(wd,'models',f'DM_{version}_{str(Total_episodes).zfill(10)}.pt')))
-        #UM.load_state_dict(torch.load(os.path.join(wd,'models',f'UM_{version}_{str(Total_episodes).zfill(10)}.pt')))
         QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))
 
     print('Init wt',SLM.fc2.weight.data[0].mean())
 
     if Total_episodes == 0:
         torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
-        #torch.save(DM.state_dict(),os.path.join(wd,'models',f'DM_{version}_{str(Total_episodes).zfill(10)}.pt'))
-        #torch.save(UM.state_dict(),os.path.join(wd,'models',f'UM_{version}_{str(Total_episodes).zfill(10)}.pt'))
         torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
 
     while Total_episodes < Max_episodes:
+
         Xbuffer = [[],[],[]]
         Ybuffer = [[],[],[]]
         SL_X = []
         SL_Y = []
         chunksizes = torch.diff(torch.torch.linspace(0,N_episodes,nprocess+1).type(torch.int64))
 
-        #print(chunksizes)
-        #quit()
         t0 = time.time()
         with mp.Pool(nprocess) as pool:
             print(version, 'Playing games')
 
             SLM.eval()
-            #DM.eval()
-            #UM.eval()
             QV.eval()
 
             tasks = [([SLM, QV], rand_param, selfplay_device, N_history, chunksizes[_], _, nprocess) for _ in range(nprocess)]
@@ -195,8 +191,7 @@ if __name__ == '__main__':
         opt = torch.optim.Adam(SLM.parameters(), lr=LR, weight_decay=l2_reg_strength)
         SLM = train_model('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         SLM.to(device)
-        print('Sample wt',SLM.fc2.weight.data[0].mean())
-        #quit()
+        print('Sample wt SL',SLM.fc2.weight.data[0].mean())
 
         # QV part
         X_full = torch.cat([torch.concat(list(Xbuffer[i])) for i in range(3)])
@@ -208,6 +203,7 @@ if __name__ == '__main__':
         opt = torch.optim.Adam(QV.parameters(), lr=LR, weight_decay=l2_reg_strength)
         QV = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
         QV.to(device)
+        print('Sample wt QV',QV.fc2.weight.data[0].mean(),'\n')
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -217,6 +213,9 @@ if __name__ == '__main__':
             torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
             torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
 
+        te = time.time()
+        
+        print('Episode time:', round(te-t0))
 
 '''
 e:

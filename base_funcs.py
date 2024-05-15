@@ -5,7 +5,7 @@ from itertools import combinations
 import time
 import os
 import sys
-from model import *
+#from model import *
 import numpy as np
 
 r2c_base = {0:'3',
@@ -1153,6 +1153,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
 
 if __name__ == '__main__':
+    from model import *
     wd = os.path.dirname(__file__)
     Label = ['Landlord','Farmer-0','Farmer-1']
     N_history = 15 # number of historic moves in model input

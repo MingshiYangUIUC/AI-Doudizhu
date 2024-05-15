@@ -58,37 +58,11 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty):
             CC[2][:min(card_count[2],15)] = 1
             #print(CC)
 
-            Bigstate = torch.cat([player.unsqueeze(0),
-                                    str2state(unavail).unsqueeze(0),
-                                    CC.unsqueeze(0),
-                                    visible.unsqueeze(0), # new feature
-                                    history])
-
-            # generate inputs
-            hinput = Bigstate.unsqueeze(0)
-            model_inter = SLM(hinput)
-            role = torch.zeros((model_inter.shape[0],15)) + Turn%3
-            
-            # get all actions
-            acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],Forcemove)
-            # generate inputs 2
-            model_inter = torch.concat([hinput[:,0].sum(dim=-2),model_inter,role],dim=-1)
-            model_input2 = torch.stack([torch.cat((model_inter.flatten(),str2state(a[0]).sum(dim=0))) for a in acts])
-
-            # get q values
-            output = QV(model_input2).flatten()
-
-
-            if temperature == 0:
-                Q = torch.max(output)
-                best_act = acts[torch.argmax(output)]
+            if SLM.non_hist == 5:
+                action, Q = get_action_serial_V2_1_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
             else:
-                probabilities = torch.softmax(output / temperature, dim=0)
-                distribution = torch.distributions.Categorical(probabilities)
-                q = distribution.sample()
-                best_act = acts[q]
-                Q = output[q]
-            action = best_act
+                action, Q = get_action_serial_V2_0_0(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
+            
 
             if Turn < 3:
                 Q0.append(Q.item())
@@ -198,45 +172,15 @@ def gamewithplayer(iPlayer, Models, epsilon, pause=0.5, nhistory=6, automatic=Fa
         #print(CC)
 
         # get action
-        # get action
-        Bigstate = torch.cat([player.unsqueeze(0),
-                                  str2state(unavail).unsqueeze(0),
-                                  CC.unsqueeze(0),
-                                  visible.unsqueeze(0), # new feature
-                                  history])
-
-        # generate inputs
-        hinput = Bigstate.unsqueeze(0)
-        model_inter = SLM(hinput)
-        role = torch.zeros((model_inter.shape[0],15)) + Turn%3
+        if SLM.non_hist == 5:
+            action, Q = get_action_serial_V2_1_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
+        else:
+            action, Q = get_action_serial_V2_0_0(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
         
-        # get all actions
-        acts = avail_actions(lastmove[0],lastmove[1],Bigstate[0],Forcemove)
-        # generate inputs 2
-        model_inter = torch.concat([hinput[:,0].sum(dim=-2),model_inter,role],dim=-1)
-        model_input2 = torch.stack([torch.cat((model_inter.flatten(),str2state(a[0]).sum(dim=0))) for a in acts])
+        action_suggest = action.copy()
+        if action_suggest[0] == '':
+            action_suggest[0] = 'pass'
 
-        # get q values
-        output = QV(model_input2).flatten()
-
-        if temperature == 0:
-            Q = torch.max(output)
-            best_act = acts[torch.argmax(output)]
-        else:
-            probabilities = torch.softmax(output / temperature, dim=0)
-            distribution = torch.distributions.Categorical(probabilities)
-            q = distribution.sample()
-            best_act = acts[q]
-            Q = output[q]
-        action = best_act
-
-        action_suggest = action
-        if Turn < 3:
-            Q0.append(Q.item())
-            Qd = 0.0
-        else:
-            Qd = Q.item() - Qs[Turn-3]
-        Qs.append(Q.item())
         if Turn % 3 == iPlayer and not automatic:
             #print(f'Your cards: {state2str(player)}')
             all_acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
@@ -251,11 +195,26 @@ def gamewithplayer(iPlayer, Models, epsilon, pause=0.5, nhistory=6, automatic=Fa
                     action = [''.join(sorted(action[0])),action[1]]
                     if action in all_acts:
                         action = [''.join(sorted(action[0], key=lambda x: c2r_base[x])),action[1]]
+                        if SLM.non_hist == 5:
+                            Q_r = evaluate_action_serial_V2_1_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
+                                                                action[0])
+                        else:
+                            Q_r = evaluate_action_serial_V2_0_0(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
+                                                                action[0])
                         ts = time.time()
                         break
                 
                 print('Illegal Action, try again!')
-            
+        else:
+            Q_r = Q
+        
+        if Turn < 3:
+            Q0.append(Q.item())
+            Qd = 0.0
+        else:
+            Qd = Q_r.item() - Qs[Turn-3]
+        Qs.append(Q_r.item())
+
         if Forcemove:
             Forcemove = False
 
@@ -268,7 +227,7 @@ def gamewithplayer(iPlayer, Models, epsilon, pause=0.5, nhistory=6, automatic=Fa
         newhist = torch.roll(history,1,dims=0)
         newhist[0] = str2state(action[0]) # first row is newest, others are moved downward
         
-        #newlast = ['',(0,0)]
+        
         play = action[0]
         if action[1][0] == 0:
             play = 'pass'
@@ -294,9 +253,12 @@ def gamewithplayer(iPlayer, Models, epsilon, pause=0.5, nhistory=6, automatic=Fa
             if Turn % 3 == iPlayer or automatic:
                 if automatic or (showall and Turn%3==iPlayer):
                     outstr = f"{Label[Turn % 3]} {str(Turn).zfill(2)}     {myst.zfill(20).replace('0', ' ')} {play.zfill(20).replace('0', ' ')} by {Label[Turn % 3]} "
-                    outstr += f'{str(round(Q.item()*100,1)).zfill(5)}% {signs[Qd>=0]}{str(round(abs(Qd)*100,1)).zfill(4)}%'
+                    outstr += f'{str(round(Q_r.item()*100,1)).zfill(5)}% {signs[Qd>=0]}{str(round(abs(Qd)*100,1)).zfill(4)}%'
                     if showall:
-                        outstr += f'  {action_suggest[0]}'
+                        if sorted(action_suggest[0]) != sorted(play):
+                            outstr += f' | {str(round(Q.item()*100,1)).zfill(5)}% {action_suggest[0]}'
+                        else:
+                            outstr += f' | Best'
                     print(outstr)
                     #print(Label[Turn%3], str(Turn).zfill(2), '   ', myst.zfill(20).replace('0',' '), play.zfill(20).replace('0',' '), 'by', Label[Turn%3],
                     #       f'{str(round(Q.item()*100,1)).zfill(5)}% {signs[Qd>=0]}{str(round(abs(Qd)*100,1)).zfill(4)}%')
@@ -413,11 +375,21 @@ if __name__ == '__main__':
 
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    v_M = 'H15-V2_0.0_0005500000'
+    name = 'H15-V2_1.2-Contester'
+    
+    mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name in f]
+    
+    if len(mfiles) == 0:
+        v_M = f'{name}_{str(0).zfill(10)}'
+    else:
+        v_M = f'{name}_{str(max(mfiles)).zfill(10)}'
+    #v_M = 'H15-V2_1.2-Contester_0022600000'
+    print('Model version:', v_M)
+    
     N_history = int(v_M[1:3])
     N_feature = 5
-    SLM = Network_Pcard(19)#,Network_Pcard(N_history+4),Network_Pcard(N_history+4)
-    QV = Network_Qv_Universal(5)
+    SLM = Network_Pcard_V1_1(20,5)#,Network_Pcard(N_history+4),Network_Pcard(N_history+4)
+    QV = Network_Qv_Universal_V1_1(6,15,512)
     
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
