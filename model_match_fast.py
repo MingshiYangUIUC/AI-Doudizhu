@@ -13,7 +13,7 @@ from torch.utils.data import TensorDataset, DataLoader
 
 from model_utils import *
 #from base_utils import *
-from base_funcs_V2_2_2 import gating_batchpool
+from base_funcs_selfplay import gating_batchpool
 
 from collections import deque
 from torch.multiprocessing import Pool
@@ -60,7 +60,7 @@ if __name__ == '__main__':
     nsim = nsim_perplayer
     
 
-    players = [str(i).zfill(10) for i in range(5000000,50000000+1,5000000)]
+    players = [str(i).zfill(10) for i in range(30000000,60000000+1,5000000)]
     players.append(players[-1])
     num_processes = min(12,(len(players)-1)*2)
 
