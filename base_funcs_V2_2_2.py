@@ -6,26 +6,31 @@ import time
 import os
 import sys
 from model_V2 import *
-from base_utils import *
 import numpy as np
+
+from base_utils import *
+
+
 
 
 #@profile
-def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100):
+def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100, bombchance=0.01):
     #print('Init wt',Models[0].fc2.weight.data[0].mean())
     #quit()
     Models[0].to(selfplay_device)  # SL
     Models[-1].to(selfplay_device) # QM
 
-    Index = torch.arange(ngame)
+    Index = np.arange(ngame)
     Active = [True for _ in range(ngame)]
     #print(max(Active))
 
-    Init_states = [init_game_3card() for _ in range(ngame)] # [Lstate, Dstate, Ustate]
+    #Init_states = [init_game_3card() for _ in range(ngame)] # [Lstate, Dstate, Ustate]
+    Init_states = [init_game_3card_bombmode() if random.choices([True, False], weights=[bombchance, 1-bombchance])[0] else init_game_3card() for _ in range(ngame)]
+    
     Visible_states = [ist[-1] for ist in Init_states] # the 3 card matrix
 
     unavail = ['' for _ in range(ngame)]
-    history = [torch.zeros((Nhistory,4,15)) for _ in range(ngame)]
+    history = [torch.zeros((Nhistory,1,15)) for _ in range(ngame)]
     lastmove = [['',(0,0)] for _ in range(ngame)]
     newlast = [[] for _ in range(ngame)]
 
@@ -36,9 +41,18 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     Forcemove = [True for _ in range(ngame)] # whether pass is not allowed
 
     BufferStatesActs = [[[],[],[]] for _ in range(ngame)] # states_actions for 3 players
-    BufferRewards = [[[],[],[]] for _ in range(ngame)] # rewards for 3 players
+    BufferRewards = [[-1,-1,-1] for _ in range(ngame)] # rewards for 3 players
 
-    Full_output = []
+    #Full_output = []
+    
+    LL_organized = []
+    F0_organized = []
+    F1_organized = []
+    LL_reward = []
+    F0_reward = []
+    F1_reward = []
+
+    stat = np.zeros(3)
     
     processed = ngame
 
@@ -52,14 +66,16 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         model_inputs = []
         model_idxs = []
         acts_list = []
-        bstates_list = []
         sl_y = []
         
         model = Models[0]
 
+        Tidx = (Turn[0]%3).item()
+
         for iin, _ in enumerate(Index[Active]):
 
-            Tidx = Turn[_]%3
+            #Tidx = Turn[_]%3
+            #print(Tidx)
             #playerstate, model = Init_states[_][Tidx], Models[Tidx] # Same model should be used for all Active
             playerstate = Init_states[_][Tidx]
             upper_state = Init_states[_][:-1][(Tidx-1)%3].sum(dim=0)
@@ -70,20 +86,24 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
             # get card count
             card_count = [int(p.sum()) for p in Init_states[_]]
-            CC = torch.zeros((4,15))
+            CC = torch.zeros((3,15))
             CC[0][:min(card_count[0],15)] = 1
             CC[1][:min(card_count[1],15)] = 1
             CC[2][:min(card_count[2],15)] = 1
 
             # get actions
+            #print('a')
+            #print(Forcemove[_])
             acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
 
             # add states and visible to big state
-            Bigstate = torch.cat([playerstate.unsqueeze(0),
-                                  str2state(unavail[_]).unsqueeze(0),
-                                  CC.unsqueeze(0),
-                                  visible.unsqueeze(0), # new feature
-                                  torch.zeros_like(visible).unsqueeze(0) + Tidx, # role feature
+
+            Bigstate = torch.cat([playerstate.sum(axis=-2,keepdims=True).unsqueeze(0),
+                                  #str2state(unavail[_]).sum(axis=-2,keepdims=True).unsqueeze(0),
+                                  str2state_compressed(unavail[_]).unsqueeze(0),
+                                  CC.unsqueeze(1),
+                                  visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
+                                  torch.zeros((1,15)).unsqueeze(0) + Tidx, # role feature
                                   history[_]])
 
             # generate inputs
@@ -93,18 +113,20 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             model_idxs.append(len(acts))
             acts_list.append(acts)
 
-            #bstates_list.append(Bigstate)
 
         # use all data to run model
         torch.cuda.empty_cache()
 
         model_inputs = torch.concat(model_inputs)
 
+        #print(model_inputs.shape)
+        #quit()
         # predict state (SL)
         model_inter = model(
             model_inputs.to(selfplay_device)
             ).to('cpu')
-        #print(model_inputs.shape)
+        #print(model_inter.shape)
+        #quit()
         SL_X.append(model_inputs.clone().detach())
         SL_Y.append(torch.stack(sl_y))
         #print(model_inter.shape,torch.stack(sl_y).shape)
@@ -112,22 +134,28 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
         model_inter = torch.concat([model_inputs[:,0].sum(dim=-2), # self
-                                    model_inputs[:,5].sum(dim=-2), # history
+                                    model_inputs[:,7].sum(dim=-2), # history
                                     model_inter, # upper and lower states
                                     role],dim=-1)
         model_input2 = []
 
         for i, mi in enumerate(model_inter):
-            input_i = torch.stack([torch.cat((mi,str2state(a[0]).sum(dim=0))) for a in acts_list[i]])
+            #input_i = torch.stack([
+            #    torch.cat((mi,str2state_compressed_1D(a[0]))) for a in acts_list[i]])
+            #model_input2.append(input_i)
+
+            actions_tensor = torch.stack([str2state_compressed_1D(a[0]) for a in acts_list[i]])
+            mi_expanded = mi.unsqueeze(0).expand(actions_tensor.shape[0],-1)  # Expand mi to match the batch size of actions_tensor
+            input_i = torch.cat((mi_expanded, actions_tensor), dim=1)
             model_input2.append(input_i)
-            #bstates_list.append(Bigstate)
+
         #print(model_inter.shape)
         #quit()
         model_output = Models[-1](torch.cat(model_input2).to(selfplay_device)).to('cpu').flatten()
 
         # conduct actions for all instances
         for iout, _ in enumerate(Index[Active]):
-            Tidx = Turn[_]%3
+            
             playerstate = Init_states[_][Tidx]
             #Bigstate = bstates_list[iout]
 
@@ -135,7 +163,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             idx_end = sum(model_idxs[:iout+1])
 
             # get q values
-            output = model_output[idx_start:idx_end].clone().detach()
+            output = model_output[idx_start:idx_end]#.clone().detach()
             acts = acts_list[iout]
 
             if temperature == 0:
@@ -161,7 +189,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             newst = ''.join(list((cA - cB).elements()))
             newunavail = unavail[_] + action[0]
             newhist = torch.roll(history[_],1,dims=0)
-            newhist[0] = str2state(action[0]) # first row is newest, others are moved downward
+            newhist[0] = str2state_compressed(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
+
 
             if action[1][0] == 0:
                 Cpass[_] += 1
@@ -181,7 +210,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             #print(newst)
 
             BufferStatesActs[_][Tidx].append(torch.concat([model_inter[iout].clone().detach(),newhist[0].sum(dim=0).clone().detach()]).unsqueeze(0))
-            BufferRewards[_][Tidx].append(0)
+            #BufferRewards[_][Tidx].append(0)
 
             Init_states[_][Tidx] = nextstate
             unavail[_] = newunavail
@@ -189,25 +218,41 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             lastmove[_] = newlast[_]
 
             if len(newst) == 0:
-                BufferRewards[_][Tidx] = [torch.as_tensor(BufferRewards[_][Tidx],dtype=torch.float32)+1]
+                BufferRewards[_][Tidx] = 1 #[torch.as_tensor(BufferRewards[_][Tidx],dtype=torch.float32)+1]
                 if Tidx == 1:
-                    BufferRewards[_][Tidx+1] = [torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)+1]
-                    BufferRewards[_][Tidx-1] = [torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)]
+                    stat[1] += 1
+                    BufferRewards[_][Tidx+1] = 1 #[torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)+1]
+                    BufferRewards[_][Tidx-1] = 0 #[torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)]
                 elif Tidx == 2:
-                    BufferRewards[_][Tidx-1] = [torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)+1]
-                    BufferRewards[_][Tidx-2] = [torch.as_tensor(BufferRewards[_][Tidx-2],dtype=torch.float32)]
+                    stat[2] += 1
+                    BufferRewards[_][Tidx-1] = 1 #[torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)+1]
+                    BufferRewards[_][Tidx-2] = 0 #[torch.as_tensor(BufferRewards[_][Tidx-2],dtype=torch.float32)]
                 elif Tidx == 0:
-                    BufferRewards[_][Tidx+1] = [torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)]
-                    BufferRewards[_][Tidx+2] = [torch.as_tensor(BufferRewards[_][Tidx+2],dtype=torch.float32)]
+                    stat[0] += 1
+                    BufferRewards[_][Tidx+1] = 0 #[torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)]
+                    BufferRewards[_][Tidx+2] = 0 #[torch.as_tensor(BufferRewards[_][Tidx+2],dtype=torch.float32)]
                 
                 Active[_] = False
 
                 # send data to output collection
-                try:
-                    SA = [[torch.concat(p)] for p in BufferStatesActs[_]]
-                    Full_output.append([SA, BufferRewards[_], True])
-                except:
-                    Full_output.append([None,None,False])
+                #try:
+                for i,p in enumerate(BufferStatesActs[_]):
+                    if len(p) > 0:
+                        if i == 0:
+                            LL_organized.append(torch.concat(p))
+                            LL_reward.append(torch.zeros(len(p))+BufferRewards[_][i])
+                        elif i == 1:
+                            F0_organized.append(torch.concat(p))
+                            F0_reward.append(torch.zeros(len(p))+BufferRewards[_][i])
+                        elif i == 2:
+                            F1_organized.append(torch.concat(p))
+                            F1_reward.append(torch.zeros(len(p))+BufferRewards[_][i])
+                    
+                    #SA = [torch.concat(p) for p in BufferStatesActs[_]]
+                    #print([sa.shape for sa in SA])
+                    #Full_output.append([SA, BufferRewards[_], True])
+                #except:
+                    #Full_output.append([None,None,False])
 
         Turn += 1 # all turn += 1
 
@@ -219,12 +264,13 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             if processed < ntask and not Active[_] and Turn[_]%3 == 0: # landlord turn, new game
                 # clear buffer
                 BufferStatesActs[_] = [[],[],[]]
-                BufferRewards[_] = [[],[],[]]
+                BufferRewards[_] = [-1,-1,-1]
 
                 # reset game
                 Active[_] = True
                 Turn[_] = 0
-                Init_states[_] = init_game_3card()
+                #Init_states[_] = init_game_3card()
+                Init_states[_] = init_game_3card_bombmode() if random.choices([True, False], weights=[bombchance, 1-bombchance])[0] else init_game_3card()
                 Visible_states[_] = Init_states[_][-1]
                 unavail[_] = ''
                 lastmove[_] = ['',(0,0)]
@@ -236,8 +282,20 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 print(str(processed).zfill(5),'/', str(ntask).zfill(5), '   ',end='\r')
         #print(Active)
         #print(processed, ntask, Turn)
-
-    return Full_output, torch.cat(SL_X), torch.cat(SL_Y)
+    
+    LL_organized = torch.cat(LL_organized)
+    F0_organized = torch.cat(F0_organized)
+    F1_organized = torch.cat(F1_organized)
+    LL_reward = torch.cat(LL_reward)
+    F0_reward = torch.cat(F0_reward)
+    F1_reward = torch.cat(F1_reward)
+    #print(LL_organized.shape,F0_organized.shape,F1_organized.shape)
+    #print(LL_reward.shape)
+    SL_X = torch.cat(SL_X)
+    SL_Y = torch.cat(SL_Y)
+    
+    return [LL_organized,F0_organized,F1_organized], [LL_reward,F0_reward,F1_reward], SL_X, SL_Y, stat
+    #return Full_output, SL_X, SL_Y
 
 def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100, rseed=0):
     # similar to above func but does not record training data
@@ -257,7 +315,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
     Visible_states = [ist[-1] for ist in Init_states] # the 3 card matrix
 
     unavail = ['' for _ in range(ngame)]
-    history = [torch.zeros((Nhistory,4,15)) for _ in range(ngame)]
+    history = [torch.zeros((Nhistory,1,15)) for _ in range(ngame)]
     lastmove = [['',(0,0)] for _ in range(ngame)]
     newlast = [[] for _ in range(ngame)]
 
@@ -291,7 +349,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
 
             # get card count
             card_count = [int(p.sum()) for p in Init_states[_]]
-            CC = torch.zeros((4,15))
+            CC = torch.zeros((3,15))
             CC[0][:min(card_count[0],15)] = 1
             CC[1][:min(card_count[1],15)] = 1
             CC[2][:min(card_count[2],15)] = 1
@@ -300,17 +358,16 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
 
             # add states and visible to big state
-            Bigstate = torch.cat([playerstate.unsqueeze(0),
-                                  str2state(unavail[_]).unsqueeze(0),
-                                  CC.unsqueeze(0),
-                                  visible.unsqueeze(0), # new feature
-                                  torch.zeros_like(visible).unsqueeze(0) + Tidx, # role feature
+            Bigstate = torch.cat([playerstate.sum(axis=-2,keepdims=True).unsqueeze(0),
+                                  #str2state(unavail[_]).sum(axis=-2,keepdims=True).unsqueeze(0),
+                                  str2state_compressed(unavail[_]).unsqueeze(0),
+                                  CC.unsqueeze(1),
+                                  visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
+                                  torch.zeros((1,15)).unsqueeze(0) + Tidx, # role feature
                                   history[_]])
 
             # generate inputs
-            hinput = Bigstate.unsqueeze(0)
-
-            model_inputs.append(hinput)
+            model_inputs.append(Bigstate.unsqueeze(0))
             model_idxs.append(len(acts))
             acts_list.append(acts)
 
@@ -334,7 +391,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
         role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
         model_inter = torch.concat([model_inputs[:,0].sum(dim=-2), # self
-                                    model_inputs[:,5].sum(dim=-2), # history
+                                    model_inputs[:,7].sum(dim=-2), # history
                                     model_inter, # upper and lower states
                                     role],dim=-1)
         model_input2 = []
@@ -383,7 +440,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             newst = ''.join(list((cA - cB).elements()))
             newunavail = unavail[_] + action[0]
             newhist = torch.roll(history[_],1,dims=0)
-            newhist[0] = str2state(action[0]) # first row is newest, others are moved downward
+            newhist[0] = str2state_compressed(action[0]) #newhist[0] = str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
 
             if action[1][0] == 0:
                 Cpass[_] += 1
@@ -439,7 +496,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
         #print(Active)
         #print(processed, ntask, Turn)
 
-    return result
+    return np.array(result)
 
 if __name__ == '__main__':
     from model_V2 import *
@@ -453,11 +510,11 @@ if __name__ == '__main__':
         torch.set_num_interop_threads(1)
 
 
-    names = ['H15-V2_1.2-Contester_0020000000','H15-V2_1.2-Contester_0035000000']
+    names = ['H15-V2_2.2_0020000000','H15-V2_2.2_0020000000']
     models = []
     for name in names:
-        SLM = Network_Pcard_V1_1(20,5)#,Network_Pcard(N_history+4),Network_Pcard(N_history+4)
-        QV = Network_Qv_Universal_V1_1(6,15,512)
+        SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
+        QV = Network_Qv_Universal_V1_1(6,15,1024)
 
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{name}.pt')))
         QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{name}.pt')))
@@ -469,13 +526,19 @@ if __name__ == '__main__':
             [SLM,QV]
             )
 
-    N_episodes = 1000
-    ng = 128
+    N_episodes = 512
+    ng = 32
     
     seed = random.randint(0,1000000000)
     print(seed)
 
-    gatingresult = gating_batchpool(models, 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes, rseed=seed)
+    #SLM = Network_Pcard_V2_1(22,7,1,15, 512,512)
+    #QV = Network_Qv_Universal_V1_1(6,15,512)
+
+    out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes)
+    print(out[-1])
+    
+    '''gatingresult = gating_batchpool(models, 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes, rseed=seed)
     print('')
     LW = (np.array(gatingresult)==0).sum()
 
@@ -483,4 +546,4 @@ if __name__ == '__main__':
     print('')
     FW = (np.array(gatingresult)!=0).sum()
 
-    print(LW, FW, LW+FW, N_episodes*2, round((LW+FW)/N_episodes/2*100,1))
+    print(LW, FW, LW+FW, N_episodes*2, round((LW+FW)/N_episodes/2*100,1))'''

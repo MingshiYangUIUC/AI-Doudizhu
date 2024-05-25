@@ -8,8 +8,8 @@ from itertools import combinations
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
-from base_funcs_V2 import *
 from model_V2 import *
+from base_utils import *
 
 from collections import deque
 from torch.multiprocessing import Pool
@@ -191,6 +191,8 @@ def simEpisode_notrain(Initstates, Models, temperature, verbose=0):
         # get action directly
         if SLM.non_hist == 5:
             action, Q = get_action_serial_V2_1_1(Turn, SLM,QV,Initstates,unavail,lastmove, Forcemove, history, temperature)
+        elif SLM.non_hist == 7:
+            action, Q = get_action_serial_V2_2_1(Turn, SLM,QV,Initstates,unavail,lastmove, Forcemove, history, temperature)
         else:
             action, Q = get_action_serial_V2_0_0(Turn, SLM,QV,Initstates,unavail,lastmove, Forcemove, history, temperature)
         
@@ -291,7 +293,7 @@ if __name__ == '__main__':
     num_processes = 20
 
 
-    names = ['H15-V2_1.2-Contester_0035000000','H15-V2_1.1_0010000000']
+    names = ['H15-V2_1.2-Contester_0035000000','H15-V2_2.1_0052000000']
 
     models = []
     nplayer = len(names)
@@ -309,8 +311,8 @@ if __name__ == '__main__':
         [SLM,QV]
         )
     
-    SLM = Network_Pcard_V1_1(20,5)
-    QV = Network_Qv_Universal_V1_1(6,15,256)
+    SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
+    QV = Network_Qv_Universal_V1_1(6,15,1024)
 
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{names[1]}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{names[1]}.pt')))
