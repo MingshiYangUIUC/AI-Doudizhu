@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 
 
-from model_V2 import *
+from model_utils import *
 #from base_utils import *
 from base_funcs_V2_2_2 import gating_batchpool
 

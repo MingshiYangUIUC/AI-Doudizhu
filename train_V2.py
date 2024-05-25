@@ -5,7 +5,7 @@ from itertools import combinations
 import torch
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
-from model_V2 import *
+from model_utils import *
 from base_utils import *
 from base_funcs_V2_2_2 import simEpisode_batchpool_softmax
 #from test_batch_sim import *

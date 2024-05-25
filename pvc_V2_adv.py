@@ -3,9 +3,11 @@ import random
 from collections import Counter
 
 #from base_funcs_V2 import *
-from model_V2 import *
+from model_utils import *
 
 from base_utils import *
+
+from rollout_V2_2_2 import get_action_adv
 
 import os
 import sys
@@ -53,15 +55,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
 
             #print(CC)
 
-            if SLM.non_hist == 5:
-                action, Q = get_action_serial_V2_1_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
-            elif SLM.non_hist == 7:
-                if 'V2_2.2' in name:
-                    action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
-                else:
-                    action, Q = get_action_serial_V2_2_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
-            else:
-                action, Q = get_action_serial_V2_0_0(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
+            action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
             
 
             if Turn < 3:
@@ -121,7 +115,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
     print(f'- Done! ({i}) \n')
     return Deck
 
-def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=None, showall=False, bomb=False): # Player is 0, 1, 2 for L, D, U
+def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=None, showall=False, bomb=False, thinktime=0): # Player is 0, 1, 2 for L, D, U
     if difficulty is None:
         if not bomb:
             Init_states = init_game_3card() # [Lstate, Dstate, Ustate]
@@ -176,18 +170,17 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         
         #print(CC)
 
-        # get action
-        if SLM.non_hist == 5:
-            action, Q = get_action_serial_V2_1_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
-        elif SLM.non_hist == 7:
-            if 'V2_2.2' in name:
-                hint = showall and Turn%3==iPlayer
-                action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
-            else:
-                action, Q = get_action_serial_V2_2_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
-        else:
-            action, Q = get_action_serial_V2_0_0(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
+        hint = showall and Turn%3==iPlayer
         
+        if Turn%3==iPlayer and not automatic:
+            action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
+        else:
+            action, Q = get_action_adv(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
+                                       nAct=5, nRoll=100, ndepth=18, maxtime=thinktime)
+            if thinktime > 0:
+                #pause += thinktime
+                ts = time.time()
+
         action_suggest = action.copy()
         #print(Q, action)
         if action_suggest[0] == '':
@@ -207,18 +200,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
                     action = [''.join(sorted(action[0])),action[1]]
                     if action in all_acts:
                         action = [''.join(sorted(action[0], key=lambda x: c2r_base[x])),action[1]]
-                        if SLM.non_hist == 5:
-                            Q_r = evaluate_action_serial_V2_1_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
-                                                                action[0])
-                        elif SLM.non_hist == 7:
-                            if 'V2_2.2' in name:
-                                Q_r = evaluate_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
-                                                                action[0])
-                            else:
-                                Q_r = evaluate_action_serial_V2_2_1(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
-                                                                action[0])
-                        else:
-                            Q_r = evaluate_action_serial_V2_0_0(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
+                        Q_r = evaluate_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
                                                                 action[0])
                         ts = time.time()
                         break
@@ -359,6 +341,7 @@ def main():
     parser.add_argument("-t", "--temperature", type=float, help="Softmax temperature: randomness of AI actions (float >= 0)")
     parser.add_argument("-d", "--difficulty", type=int, choices=[1, 2, 3, 4, 5], help="Difficulty level as quality of initial cards. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible.")
     parser.add_argument("-p", "--pausetime", type=float, help="Pause after each move in seconds (float >= 0)")
+    parser.add_argument("-th", "--thinktime", type=float, help="AI thinktime (float >= 0)")
 
     # Parse arguments
     args = parser.parse_args()
@@ -386,7 +369,7 @@ def main():
     if args.bombmode:
         print("!!!!!!BOMB mode ENABLED!!!!!!")
     
-    return args.role, args.automatic, args.showall, args.temperature, args.difficulty, args.pausetime, args.bombmode
+    return args.role, args.automatic, args.showall, args.temperature, args.difficulty, args.pausetime, args.thinktime, args.bombmode
 
 
 if __name__ == '__main__':
@@ -399,7 +382,7 @@ if __name__ == '__main__':
 
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    player, automatic, showall, temperature, difficulty, pause, bomb = main()
+    player, automatic, showall, temperature, difficulty, pause, thinktime, bomb = main()
 
     name = 'H15-V2_2.2'
     if bomb:
@@ -444,7 +427,7 @@ if __name__ == '__main__':
     #random.seed(10000)
     with torch.no_grad():
         bstrength=200
-        Turn, Qs, Log = gamewithplayer(player,[SLM,QV],temperature,pause,N_history, automatic, difficulty, showall, bomb)
+        Turn, Qs, Log = gamewithplayer(player,[SLM,QV],temperature,pause,N_history, automatic, difficulty, showall, bomb, thinktime)
 
     #print(Log)
 

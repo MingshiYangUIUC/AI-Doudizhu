@@ -1,4 +1,4 @@
-from model_V2 import *
+from model_utils import *
 from base_utils import *
 
 def resample_state(Turn, Initstates, unavail, model_inter):
@@ -46,8 +46,11 @@ def resample_state(Turn, Initstates, unavail, model_inter):
     diff2 = int(sample2.sum() - Initstates[(Turn+1)%3].sum())
     if diff2 > 0: # remove several one based on probability
         for _ in range(diff2):
-            probabilities = sample2 / sample2.sum()
-            chosen_card = np.random.choice(15, p=probabilities)
+            #probabilities = sample2 / sample2.sum()
+            prob = np.ones(15)
+            prob[sample2==0] = 0
+            prob /= prob.sum()
+            chosen_card = np.random.choice(15, p=prob)
             sample1[chosen_card] += 1
             sample2[chosen_card] -= 1
     #print(sample2)
@@ -228,15 +231,18 @@ def get_action_adv(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove, hist
         n_Q_values = output[sampled_indices]
 
     new_Q = torch.zeros(N)
+    r_count = 0
     if N == 1:
         new_Q = n_Q_values
+        time.sleep(maxtime)
     else:
-        for i in range(N): # resample given action
-            action = n_actions[i]
-            Qroll = [n_Q_values[i]] # original value has some weight (good if simulation number is small)
+        while r_count < nRoll and time.time() - t0 < maxtime:
+            Qroll = []
+            for i in range(N) : # resample given action
+                action = n_actions[i]
+                # original value has some weight (good if simulation number is small)
 
-            while time.time() - t0 < maxtime and len(Qroll)-1 < nRoll:
-            #for r in range(nRoll): # construct fake initsates, and rollout
+                # construct fake initsates, and rollout
                 sample1, sample2 = resample_state(Turn%3, Initstates, unavail, model_inter)
                 sample_states = [None,None,None,Initstates[-1].clone()]
                 sample_states[Turn%3] = Initstates[Turn%3].clone()
@@ -245,11 +251,15 @@ def get_action_adv(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove, hist
                 Qroll.append(
                     rollout_2_2_2(Turn, SLM, QV, sample_states, action.copy(), unavail, lastmove.copy(), Forcemove, history.clone(), temperature, Npass, Cpass,
                                 depth=ndepth))
-                
-            Qroll = np.array(Qroll)
-            #print(Turn, n_Q_values[i].item(), np.mean(Qroll))
-            #print(np.round(Qroll,1))
-            new_Q[i] = np.mean(Qroll)
+
+            Qroll = torch.as_tensor(Qroll)
+
+            new_Q += Qroll
+
+            r_count += 1
+        new_Q /= r_count
+    
+        #print(f'Scanned X actions, {r_count} bootstraps.')
 
     best_action = n_actions[torch.argmax(new_Q)]
     Q = torch.max(new_Q)

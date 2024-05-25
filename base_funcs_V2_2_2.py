@@ -5,7 +5,7 @@ from itertools import combinations
 import time
 import os
 import sys
-from model_V2 import *
+from model_utils import *
 import numpy as np
 
 from base_utils import *
@@ -499,7 +499,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
     return np.array(result)
 
 if __name__ == '__main__':
-    from model_V2 import *
+    from model_utils import *
     from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 
     wd = os.path.dirname(__file__)

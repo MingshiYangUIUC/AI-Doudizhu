@@ -17,5 +17,6 @@ games
 models
 __pycache__
 tmp
+dev_code
 D_train.lnk
 .plan.txt

@@ -3,7 +3,7 @@ import random
 from collections import Counter
 
 #from base_funcs_V2 import *
-from model_V2 import *
+from model_utils import *
 
 from base_utils import *
 
