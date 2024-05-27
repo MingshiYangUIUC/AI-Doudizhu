@@ -1,8 +1,5 @@
 # no elo, only win rate
 
-# L model vs a pair of D and U
-
-
 import torch
 import random
 from collections import Counter
@@ -56,11 +53,11 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
     
     # determine which models participate in the contest
-    nsim_perplayer = 3000
+    nsim_perplayer = 4000
     nsim = nsim_perplayer
     
 
-    players = [str(i).zfill(10) for i in range(30000000,60000000+1,5000000)]
+    players = [str(i).zfill(10) for i in range(60000000,80000000+1,5000000)]
     players.append(players[-1])
     num_processes = min(12,(len(players)-1)*2)
 

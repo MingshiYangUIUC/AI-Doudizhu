@@ -20,3 +20,4 @@ tmp
 dev_code
 D_train.lnk
 .plan.txt
+*.lprof

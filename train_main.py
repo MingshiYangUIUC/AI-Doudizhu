@@ -89,7 +89,7 @@ if __name__ == '__main__':
     term = False
     try:
         if sys.argv[1] == '-a': # auto detect
-            mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if version in f]
+            mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if '_'+version+'_' in f]
             if len(mfiles) == 0:
                 Total_episodes = 0
                 migrate=False
@@ -122,7 +122,7 @@ if __name__ == '__main__':
     
     N_episodes     = 25000 # number of games to be played before each round of training
 
-    Save_frequency = 50000
+    Save_frequency = 100000
 
     nprocess = 14 # number of process in selfplay
 
@@ -132,10 +132,11 @@ if __name__ == '__main__':
 
     batch_size = 64
     nepoch = 1
-    LR = 0.000003
+    LR1 = 0.000005
+    LR2 = 0.000003
     l2_reg_strength = 1e-6
 
-    rand_param = 0.02 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
+    rand_param = 0.01 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
     bomb_chance = 0.0 # chance of getting a deck full of bombs during selfplay
 
     n_past_ds = 10 # augment using since last NP datasets.
@@ -218,7 +219,7 @@ if __name__ == '__main__':
         # SL part
         train_dataset = TensorDataset(SL_X, SL_Y)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.Adam(SLM.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
         SLM = train_model('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         SLM.to(device)
         print('Sample wt SL',SLM.fc2.weight.data[0].mean().item())
@@ -230,7 +231,7 @@ if __name__ == '__main__':
 
         train_dataset = TensorDataset(X_full, Y_full)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.Adam(QV.parameters(), lr=LR, weight_decay=l2_reg_strength)
+        opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
         QV = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
         QV.to(device)
         print('Sample wt QV',QV.fc2.weight.data[0].mean().item())
@@ -250,5 +251,5 @@ if __name__ == '__main__':
 '''
 e:
 conda activate rl-0
-python E:\\Documents\\ddz\\train_V2.py
+python E:\\Documents\\ddz\\train_main.py
 '''

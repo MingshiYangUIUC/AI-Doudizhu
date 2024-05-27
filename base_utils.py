@@ -263,7 +263,7 @@ def avail_actions(opact,opinfo,mystate,forcemove=0):
 
         # Find action based on previous state
         # Assign unique type to new actions
-        
+        out = []
         if opinfo[0] == 1: # single
             # return all larger single or bombs
             out = [[r2c_base[i],(1,i)] for i in range(opinfo[1]+1,15) if Nelems[i] >= 1]

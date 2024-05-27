@@ -7,7 +7,7 @@ from model_utils import *
 
 from base_utils import *
 
-from rollout import get_action_adv
+from rollout import *
 
 import os
 import sys
@@ -115,7 +115,8 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
     print(f'- Done! ({i}) \n')
     return Deck
 
-def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=None, showall=False, bomb=False, thinktime=0): # Player is 0, 1, 2 for L, D, U
+def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=None,\
+                   showall=False, bomb=False, thinktime=0, risk_penalty=0.0): # Player is 0, 1, 2 for L, D, U
     if difficulty is None:
         if not bomb:
             Init_states = init_game_3card() # [Lstate, Dstate, Ustate]
@@ -172,11 +173,11 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
 
         hint = showall and Turn%3==iPlayer
         
-        if Turn%3==iPlayer and not automatic:
+        if (Turn%3==iPlayer and not automatic) or thinktime == 0:
             action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
         else:
-            action, Q = get_action_adv(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct=5, nRoll=100, ndepth=18, maxtime=thinktime)
+            action, Q = get_action_adv_batch(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
+                                       nAct=12, nRoll=400, ndepth=36, risk_penalty=risk_penalty,maxtime=thinktime)
             if thinktime > 0:
                 #pause += thinktime
                 ts = time.time()
@@ -342,6 +343,7 @@ def main():
     parser.add_argument("-d", "--difficulty", type=int, choices=[1, 2, 3, 4, 5], help="Difficulty level as quality of initial cards. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible.")
     parser.add_argument("-p", "--pausetime", type=float, help="Pause after each move in seconds (float >= 0)")
     parser.add_argument("-th", "--thinktime", type=float, help="AI thinktime (float >= 0)")
+    parser.add_argument("-rp", "--riskpenalty", type=float, help="AI risk penalty (float >= 0)")
 
     # Parse arguments
     args = parser.parse_args()
@@ -358,6 +360,12 @@ def main():
 
     if args.pausetime is None:
         args.pausetime = 0.5
+    if args.thinktime is None:
+        args.thinktime = 0.0
+    else:
+        args.pausetime = 0.0
+    if args.riskpenalty is None:
+        args.riskpenalty = 0.0
 
     # Automatic mode check
     if args.automatic:
@@ -369,7 +377,8 @@ def main():
     if args.bombmode:
         print("!!!!!!BOMB mode ENABLED!!!!!!")
     
-    return args.role, args.automatic, args.showall, args.temperature, args.difficulty, args.pausetime, args.thinktime, args.bombmode
+    return args.role, args.automatic, args.showall, args.temperature, args.difficulty, args.pausetime, \
+           args.thinktime, args.riskpenalty, args.bombmode
 
 
 if __name__ == '__main__':
@@ -382,17 +391,17 @@ if __name__ == '__main__':
 
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    player, automatic, showall, temperature, difficulty, pause, thinktime, bomb = main()
+    player, automatic, showall, temperature, difficulty, pause, thinktime, rp, bomb = main()
 
     name = 'H15-V2_2.2'
     if bomb:
         name += '-bomber'
-        mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name in f]
+        mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name + '_' in f]
         if len(mfiles) == 0:
             name = name[:-7]
         #pass
     
-    mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name in f]
+    mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name + '_' in f]
     
     if len(mfiles) == 0:
         v_M = f'{name}_{str(0).zfill(10)}'
@@ -427,12 +436,13 @@ if __name__ == '__main__':
     #random.seed(10000)
     with torch.no_grad():
         bstrength=200
-        Turn, Qs, Log = gamewithplayer(player,[SLM,QV],temperature,pause,N_history, automatic, difficulty, showall, bomb, thinktime)
+        Turn, Qs, Log = gamewithplayer(player, [SLM,QV], temperature, pause, N_history, automatic,\
+                                       difficulty, showall, bomb, thinktime, rp)
 
     #print(Log)
 
 '''
 e:
 conda activate rl-0
-python E:\\Documents\\ddz\\pvc_V2.py -h
+python E:\\Documents\\ddz\\pvc.py -h
 '''
