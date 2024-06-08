@@ -1,3 +1,5 @@
+# generate training data only
+
 import torch
 import random
 from collections import Counter
@@ -34,33 +36,17 @@ def train_model(device, model, criterion, loader, nep, optimizer):
             loss = criterion(outputs, targets)  # Calculate loss
             loss.backward()  # Backward pass
             optimizer.step()  # Optimize
+            '''with torch.autocast(device_type='cuda', dtype=torch.float16):
+                outputs = model(input)
+                loss = criterion(outputs, targets)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()'''
             
             running_loss += loss.item()
         
         # Calculate the average loss per batch over the epoch
-        epoch_loss = running_loss / len(loader)
-        print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
-    return model
-
-
-def train_model_amp(device, model, criterion, loader, nep, optimizer):
-    scaler = torch.cuda.amp.GradScaler(init_scale=65536.0, growth_factor=2.0, backoff_factor=0.5)
-    model.to(device)
-    model.train()
-    for epoch in range(nep):
-        running_loss = 0.0
-        for inputs, targets in tqdm(loader):
-            inputs, targets = inputs.to(device), targets.to(device)
-            optimizer.zero_grad()
-            with torch.cuda.amp.autocast(dtype=torch.float16):
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            running_loss += loss.item()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         epoch_loss = running_loss / len(loader)
         print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
     return model
@@ -102,13 +88,14 @@ if __name__ == '__main__':
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
 
+    save_path = '/mnt/e/Documents/ddz/train'
+
     device = 'cpu'
     selfplay_device = 'cuda'
 
     N_history = 15 # number of historic moves in model input
     N_feature = 7
     version = f'H{str(N_history).zfill(2)}-V2_2.2'
-    #version = f'H{str(N_history).zfill(2)}-V2_1.1'
 
     term = False
     try:
@@ -146,27 +133,27 @@ if __name__ == '__main__':
     
     N_episodes     = 25000 # number of games to be played before each round of training
 
-    Save_frequency = 100000
+    #Save_frequency = 100000
 
     nprocess = 14 # number of process in selfplay
 
     # transfer weights from another version (need same model structure)
-    transfer = False
-    transfer_name = ''
+    # transfer = False
+    # transfer_name = ''
 
-    batch_size = 256
-    nepoch = 1
-    LR1 = 0.000005/64*batch_size
-    LR2 = 0.000003/64*batch_size
-    l2_reg_strength = 1e-6
+    # batch_size = 64
+    # nepoch = 1
+    # LR1 = 0.000005
+    # LR2 = 0.000003
+    # l2_reg_strength = 1e-6
 
     rand_param = 0.01 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
     bomb_chance = 0.01 # chance of getting a deck full of bombs during selfplay
 
-    n_past_ds = 10 # augment using since last NP datasets.
-    n_choice_ds = 1 # choose NC from last NP datasets
+    # n_past_ds = 10 # augment using since last NP datasets.
+    # n_choice_ds = 1 # choose NC from last NP datasets
 
-    n_worker = 0 # default dataloader
+    # n_worker = 0 # default dataloader
 
     #LM, DM, UM = Network_Pcard(N_history+N_feature),Network_Pcard(N_history+N_feature),Network_Pcard(N_history+N_feature)
     SLM = Network_Pcard_V2_1(N_history+N_feature, N_feature, y=1, x=15, lstmsize=512, hiddensize=1024)
@@ -174,7 +161,7 @@ if __name__ == '__main__':
 
     #quit()
     #print(LM.nhist)
-    print('Init wt',SLM.fc2.weight.data[0].mean().item())
+    # print('Init wt',SLM.fc2.weight.data[0].mean().item())
 
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
@@ -185,8 +172,9 @@ if __name__ == '__main__':
     if Total_episodes == 0 and not migrate:
         torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
         torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
-
-    while Total_episodes < Max_episodes:
+    
+    N = 0
+    while N < Max_episodes - Total_episodes:
 
         Xbuffer = [[],[],[]]
         Ybuffer = [[],[],[]]
@@ -206,9 +194,10 @@ if __name__ == '__main__':
 
             results = list(pool.imap_unordered(worker, tasks, chunksize=cs))
         
-        Total_episodes += N_episodes
+        N += N_episodes
+
         t1 = time.time()
-        print(version, 'Played games:',Total_episodes, 'Elapsed time:', round(t1-t0))
+        print(version, 'Played games:',N, 'Elapsed time:', round(t1-t0))
         torch.cuda.empty_cache()
         
         # End selfplay, process results
@@ -219,18 +208,12 @@ if __name__ == '__main__':
             SL_Y.append(sl_y)
 
             for i in range(3):
-                #print(BufferStatesActs[i].shape)
                 Xbuffer[i].append(SAs[i])
                 Ybuffer[i].append(Rewards[i])
-                #print(SAs[i].shape, Rewards[i].shape)
-                #print(BufferRewards[i][0], torch.zeros(len(BufferStatesActs[i][0]))+BufferRewards[i][0][0])
-                #print(len(BufferStatesActs[i]),torch.zeros(len(BufferStatesActs[i]))+BufferRewards[i])
-            
+
             STAT += stat
     
         del results, SAs, Rewards, sl_x, sl_y
-        #del results, tasks, chunk
-        
 
         SL_X = torch.cat(SL_X)
         SL_Y = torch.cat(SL_Y)
@@ -238,35 +221,24 @@ if __name__ == '__main__':
         #STAT[1:] = np.sum(STAT[1:])
         print('Game Stat:',np.round((STAT/N_episodes)*100,2))
 
-        print(SL_X.shape,SL_Y.shape)
+        J = len(os.listdir(save_path)) // 2
+
+        print('Saving 0',SL_X.shape,SL_Y.shape)
 
         # SL part
-        train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker)#, pin_memory=True)
-        opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
-        SLM = train_model('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
-        SLM.to(device)
-        print('Sample wt SL',SLM.fc2.weight.data[0].mean().item())
+        train_dataset = TensorDataset(SL_X.to(torch.float16), SL_Y.to(torch.float16))
+        torch.save(train_dataset,os.path.join(save_path,f'{version}_{str(Total_episodes).zfill(10)}_SLM_{str(J).zfill(5)}.pt'))
 
         # QV part
         X_full = torch.cat([torch.concat(list(Xbuffer[i])) for i in range(3)])
         Y_full = torch.cat([torch.concat(list(Ybuffer[i])) for i in range(3)]).unsqueeze(1)
-        print(X_full.shape,Y_full.shape)
-
-        train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker)#, pin_memory=True)
-        opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
-        QV = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
-        QV.to(device)
-        print('Sample wt QV',QV.fc2.weight.data[0].mean().item())
+        print('Saving 1',X_full.shape,Y_full.shape)
+        train_dataset = TensorDataset(X_full.to(torch.float16), Y_full.to(torch.float16))
+        torch.save(train_dataset,os.path.join(save_path,f'{version}_{str(Total_episodes).zfill(10)}_QV_{str(J).zfill(5)}.pt'))
 
         gc.collect()
         torch.cuda.empty_cache()
 
-        # save once every X episodes
-        if Total_episodes % Save_frequency == 0:
-            torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
-            torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
 
         te = time.time()
         
@@ -275,5 +247,5 @@ if __name__ == '__main__':
 '''
 e:
 conda activate rl-0
-python E:\\Documents\\ddz\\train_main.py
+python E:\\Documents\\ddz\\selfplay.py
 '''

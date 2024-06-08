@@ -17,8 +17,8 @@ from base_utils import *
 def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100, bombchance=0.01):
     #print('Init wt',Models[0].fc2.weight.data[0].mean())
     #quit()
-    Models[0].to(selfplay_device)  # SL
-    Models[-1].to(selfplay_device) # QM
+    Models[0].to(torch.float16).to(selfplay_device)  # SL
+    Models[-1].to(torch.float16).to(selfplay_device) # QM
 
     Index = np.arange(ngame)
     Active = [True for _ in range(ngame)]
@@ -123,8 +123,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         #quit()
         # predict state (SL)
         model_inter = model(
-            model_inputs.to(selfplay_device)
-            ).to('cpu')
+            model_inputs.to(torch.float16).to(selfplay_device)
+            ).to('cpu').to(torch.float32)
         #print(model_inter.shape)
         #quit()
         SL_X.append(model_inputs.clone().detach())
@@ -151,7 +151,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
         #print(model_inter.shape)
         #quit()
-        model_output = Models[-1](torch.cat(model_input2).to(selfplay_device)).to('cpu').flatten()
+        model_output = Models[-1](torch.cat(model_input2).to(torch.float16).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+
 
         # conduct actions for all instances
         for iout, _ in enumerate(Index[Active]):
@@ -302,11 +303,11 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
     # use two sets of models, first set plays as landlord
     random.seed(rseed)
 
-    Models[0][0].to(selfplay_device)  # SL for p1
-    Models[0][1].to(selfplay_device) # QM for p1
+    Models[0][0].to(torch.float16).to(selfplay_device)  # SL for p1
+    Models[0][1].to(torch.float16).to(selfplay_device) # QM for p1
 
-    Models[1][0].to(selfplay_device)  # SL for p2
-    Models[1][1].to(selfplay_device) # QM for p2
+    Models[1][0].to(torch.float16).to(selfplay_device)  # SL for p2
+    Models[1][1].to(torch.float16).to(selfplay_device) # QM for p2
 
     Index = torch.arange(ngame)
     Active = [True for _ in range(ngame)]
@@ -385,8 +386,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
 
         # predict state (SL)
         model_inter = modelS(
-            model_inputs.to(selfplay_device)
-            ).to('cpu')
+            model_inputs.to(torch.float16).to(selfplay_device)
+            ).to('cpu').to(torch.float32)
 
         role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
@@ -400,7 +401,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             input_i = torch.stack([torch.cat((mi,str2state(a[0]).sum(dim=0))) for a in acts_list[i]])
             model_input2.append(input_i)
 
-        model_output = modelQ(torch.cat(model_input2).to(selfplay_device)).to('cpu').flatten()
+        model_output = modelQ(torch.cat(model_input2).to(torch.float16).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
 
         torch.cuda.empty_cache()
 

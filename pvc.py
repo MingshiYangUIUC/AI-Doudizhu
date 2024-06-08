@@ -116,7 +116,16 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
     return Deck
 
 def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=None,\
-                   showall=False, bomb=False, thinktime=0, risk_penalty=0.0): # Player is 0, 1, 2 for L, D, U
+                   showall=False, bomb=False, thinktime=0, risk_penalty=0.0, seed=None): # Player is 0, 1, 2 for L, D, U
+    if seed is None:
+        seed = np.random.randint(-100000000,100000000)
+    else:
+        if difficulty is not None:
+            print('Seed will not work correctly together with difficulty.')
+        
+    print('Game Seed:', seed)
+    random.seed(seed)
+    
     if difficulty is None:
         if not bomb:
             Init_states = init_game_3card() # [Lstate, Dstate, Ustate]
@@ -337,13 +346,14 @@ def main():
     # Add arguments
     parser.add_argument("-a", "--automatic", action="store_true", help="Enable automatic mode: three AI playing and you just spectate one of them.")
     parser.add_argument("-b", "--bombmode", action="store_true", help="Enable bomb mode: players are more likely to get bombs.")
-    parser.add_argument("-s", "--showall", action="store_true", help="Show all statistics regardless of game mode.")
+    parser.add_argument("-sh", "--showall", action="store_true", help="Show all statistics regardless of game mode.")
     parser.add_argument("-r", "--role", type=int, choices=[0, 1, 2], help="Role number. 0: Landlord, 1: Farmer-0, 2: Farmer-1. ")
     parser.add_argument("-t", "--temperature", type=float, help="Softmax temperature: randomness of AI actions (float >= 0)")
     parser.add_argument("-d", "--difficulty", type=int, choices=[1, 2, 3, 4, 5], help="Difficulty level as quality of initial cards. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible.")
     parser.add_argument("-p", "--pausetime", type=float, help="Pause after each move in seconds (float >= 0)")
     parser.add_argument("-th", "--thinktime", type=float, help="AI thinktime (float >= 0)")
     parser.add_argument("-rp", "--riskpenalty", type=float, help="AI risk penalty (float >= 0)")
+    parser.add_argument("-s", "--seed", type=int, help="Game Seed (int)")
 
     # Parse arguments
     args = parser.parse_args()
@@ -378,7 +388,7 @@ def main():
         print("!!!!!!BOMB mode ENABLED!!!!!!")
     
     return args.role, args.automatic, args.showall, args.temperature, args.difficulty, args.pausetime, \
-           args.thinktime, args.riskpenalty, args.bombmode
+           args.thinktime, args.riskpenalty, args.bombmode, args.seed
 
 
 if __name__ == '__main__':
@@ -391,7 +401,7 @@ if __name__ == '__main__':
 
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    player, automatic, showall, temperature, difficulty, pause, thinktime, rp, bomb = main()
+    player, automatic, showall, temperature, difficulty, pause, thinktime, rp, bomb, seed = main()
 
     name = 'H15-V2_2.2'
     if bomb:
@@ -437,7 +447,7 @@ if __name__ == '__main__':
     with torch.no_grad():
         bstrength=200
         Turn, Qs, Log = gamewithplayer(player, [SLM,QV], temperature, pause, N_history, automatic,\
-                                       difficulty, showall, bomb, thinktime, rp)
+                                       difficulty, showall, bomb, thinktime, rp, seed)
 
     #print(Log)
 

@@ -276,7 +276,7 @@ def get_action_adv(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove, hist
     return best_action, Q
 
 #@profile
-def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastmove, Forcemove, history, temperature, Npass, Cpass, depth=3, selfplay_device='cuda'):
+def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastmove, Forcemove, ihistory, temperature, Npass, Cpass, depth=3, selfplay_device='cuda'):
     
     # do all sample states in a batch
     # sample_states are different (passed here)
@@ -290,7 +290,7 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
     Visible_states = [ist[-1] for ist in sample_states] # the 3 card matrix
 
     unavail = [unavail for _ in range(ngame)]
-    history = [torch.zeros((15,1,15)) for _ in range(ngame)]
+    history = [ihistory.clone() for _ in range(ngame)]
     lastmove = [lastmove.copy() for _ in range(ngame)]
     newlast = [lastmove.copy() for _ in range(ngame)]
 
@@ -300,12 +300,12 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
     Forcemove = [Forcemove for _ in range(ngame)] # whether pass is not allowed
 
     rTurn = Turn
+    #print(Turn)
 
     d = 0
 
     Index = torch.arange(ngame)
     Active = [True for _ in range(ngame)]
-
 
     results = torch.zeros(ngame)
 
@@ -354,8 +354,8 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
 
             # predict state (SL)
             model_inter = SLM(
-                model_inputs.to(selfplay_device)
-                ).to('cpu')
+                model_inputs.to(torch.float16).to(selfplay_device)
+                ).to('cpu').to(torch.float32)
 
             role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
@@ -371,13 +371,8 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
                 input_i = torch.cat((mi_expanded, actions_tensor), dim=1)
                 model_input2.append(input_i)
 
-            #print(model_input2)
+            model_output = QV(torch.cat(model_input2).to(torch.float16).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
             
-
-            model_output = QV(torch.cat(model_input2).to(selfplay_device)).to('cpu').flatten()
-            
-            #print(model_output)
-            #quit()
             # get action list
             selected_actions = []
             selected_qs = []
@@ -391,7 +386,7 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
                 idx_end = sum(model_idxs[:iout+1])
 
                 # get q values
-                output = model_output[idx_start:idx_end]#.clone().detach()
+                output = model_output[idx_start:idx_end].clone().detach()
                 acts = acts_list[iout]
 
                 if temperature == 0:
@@ -460,23 +455,21 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
             history[_] = newhist
             lastmove[_] = newlast[_]
 
-            results[_] = Q
+            if d % 3 == 0:
+                results[_] = Q
 
             if len(newst) == 0:
                 Active[_] = False
                 results[_] = 0
                 if Turn%3 == 0 and rTurn%3 == 0:
                     results[_] = 1
-                if Turn%3 != 0 and rTurn%3 != 0:
+                elif Turn%3 != 0 and rTurn%3 != 0:
                     results[_] = 1
                 #print(action, rTurn, results[_])
+
         d += 1
         rTurn += 1
 
-    #SLM.to('cpu')
-    #QV.to('cpu')
-
-    #print(results)
     return results
 
 #@profile
@@ -484,8 +477,8 @@ def get_action_adv_batch(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove
     
     selfplay_device = 'cuda'
 
-    SLM.to(selfplay_device)
-    QV.to(selfplay_device)
+    SLM.to(selfplay_device).to(torch.float16)
+    QV.to(selfplay_device).to(torch.float16)
 
     t0 = time.time()
 
@@ -511,7 +504,7 @@ def get_action_adv_batch(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove
     #print(Bigstate)
     # generate inputs
     hinput = Bigstate.unsqueeze(0)
-    model_inter = SLM(hinput.to(selfplay_device)).to('cpu')
+    model_inter = SLM(hinput.to(torch.float16).to(selfplay_device)).to('cpu').to(torch.float32)
     role = torch.zeros((model_inter.shape[0],15)) + Turn%3
     
     # get all actions
@@ -528,7 +521,7 @@ def get_action_adv_batch(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove
     model_input2 = torch.stack([torch.cat((model_inter2.flatten(),str2state(a[0]).sum(dim=0))) for a in acts])
 
     # get q values
-    output = QV(model_input2.to(selfplay_device)).to('cpu').flatten()
+    output = QV(model_input2.to(torch.float16).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
 
     # get N best actions to sample from!
     N = min(nAct,len(acts))
@@ -556,10 +549,10 @@ def get_action_adv_batch(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove
         # batch version
         #print('SSSSSS')
         dynamic_Roll = int(nAct / N * nRoll)
+        nloop = int(dynamic_Roll / int(nAct / N * 10) * maxtime / 2) 
 
-        nloop = int(dynamic_Roll / int(nAct / N * 10))
-
-        for _ in range(nloop):
+        #print(dynamic_Roll, nloop, N, min(nRoll,int(nAct / N * 10)))
+        for _ in range(max(1,nloop)):
 
             if time.time() - t0 > maxtime:
                 break
@@ -570,34 +563,41 @@ def get_action_adv_batch(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove
             ractions = []
             for i in range(N) : # resample given action
                 
-                for r in range(int(nAct / N * 10)):
-
+                for r in range(min(nRoll,int(nAct / N * 10))):
+                    #print(Turn%3)
                     action = n_actions[i]
                     ractions.append(action.copy())
 
                     # construct fake initsates
                     sample1, sample2 = resample_state(Turn%3, Initstates, unavail, model_inter)
+                    #sample_states = [Initstates[0].clone(),Initstates[1].clone(),Initstates[2].clone(),Initstates[-1].clone()]
                     sample_states = [None,None,None,Initstates[-1].clone()]
                     sample_states[Turn%3] = Initstates[Turn%3].clone()
                     sample_states[(Turn-1)%3] = str2state(''.join([r2c_base[i]*sample1[i] for i in range(15)]))
                     sample_states[(Turn+1)%3] = str2state(''.join([r2c_base[i]*sample2[i] for i in range(15)]))
                     #print(sample1)
+                    #print([i.sum(dim=-2) for i in Initstates])
+                    #print(model_inter.detach().numpy().round(1).reshape(2,15))
+                    #print([i.sum(dim=-2) for i in sample_states])
+                    #quit()
                     rstates.append(sample_states)
             #print(rstates[0][1],rstates[1][1])
             #quit()
-            
+            #print(len(rstates))
             Qroll = rollout_batch(Turn, SLM, QV, rstates, ractions, unavail, lastmove.copy(), Forcemove, history.clone(), temperature, Npass, Cpass,
                                 depth=ndepth)
             #print(Qroll)
             Qroll = Qroll.reshape(N, r+1)#.sum(dim=-1)
             for i in range(N):
                 new_Q[i].append(Qroll[i])
+                #print(Qroll[i])
 
             #new_Q += Qroll
 
             r_count += r+1
         for i in range(N):
             e = torch.concat(new_Q[i])
+            #print(e)
             #print(torch.mean(e),torch.var(e))
             new_Q[i] = torch.mean(e) - risk_penalty*torch.var(e)
         #new_Q /= r_count
@@ -609,14 +609,14 @@ def get_action_adv_batch(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove
     Q = torch.max(new_Q)
     #print(n_Q_values.numpy().round(2), new_Q.numpy().round(2))
     #print(Turn, n_actions[0],best_action)
-    SLM.to('cpu')
-    QV.to('cpu')
+    SLM.to('cpu').to(torch.float32)
+    QV.to('cpu').to(torch.float32)
 
     return best_action, Q
 
 
 
-def game(Models, temperature, pause=0.5, nhistory=6, p_adv=[0], nAct=5, nRoll=10, ndepth=3, seed=0): # Player is 0, 1, 2 for L, D, U
+def game(Models, temperature, pause=0.5, nhistory=6, p_adv=[0], nAct=5, nRoll=10, ndepth=3, maxtime=1, seed=0): # Player is 0, 1, 2 for L, D, U
     random.seed(seed)
 
     Init_states = init_game_3card() # [Lstate, Dstate, Ustate]
@@ -649,7 +649,7 @@ def game(Models, temperature, pause=0.5, nhistory=6, p_adv=[0], nAct=5, nRoll=10
         
         if Turn%3 in p_adv:
             action, Q = get_action_adv_batch(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct, nRoll, ndepth, maxtime=10, sleep=False)
+                                       nAct, nRoll, ndepth, maxtime=maxtime, sleep=False)
         else:
             action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, False)
 
@@ -720,7 +720,7 @@ def play_game(seed,SLM,QV,plist):
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
     with torch.no_grad():
-        Turn, Qs, Log = game([SLM, QV], 0, 0, 15, plist, 5, 100, 6, int(seed))
+        Turn, Qs, Log = game([SLM, QV], 0, 0, 15, plist, 5, 100, 24, 5, int(seed))
         print('E')
         return Turn % 3 == 0
 
@@ -757,6 +757,7 @@ if __name__ == '__main__':
     SLM.eval()
     QV.eval()
 
+
     print('- Model Loaded')
 
     
@@ -764,18 +765,20 @@ if __name__ == '__main__':
     LW = 0
     FW = 0
     N_game = 100
-    np.random.seed(123456)
+    np.random.seed(1234567)
     seeds = np.random.randint(-1000000000, 1000000000, N_game)
+    np.random.seed()
 
-    args_list = [(seed, SLM,QV,[0]) for seed in seeds]
+    args_list = [(seed, SLM, QV, [1,2]) for seed in seeds]
 
     if torch.get_num_threads() > 1: # no auto multi threading
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
-    with torch.no_grad():
-        Turn, Qs, Log = game([SLM, QV], 0, 0, 15, [0], 5, 100, 6, int(seeds[0]))
-
-    quit()
+    #with torch.no_grad():
+    #    Turn, Qs, Log = game([SLM, QV], 0, 0, 15, [0,1,2], 5, 50, 24, int(seeds[0]))
+    #    print('\n',Turn)
+    #    print(Log)
+    #quit()
 
     with Pool(12) as pool:
         results = pool.starmap(play_game, args_list)

@@ -22,6 +22,7 @@ import sys
 import torch.multiprocessing as mp
 import numpy as np
 from matplotlib import pyplot as plt
+import gc
 
 wd = os.path.join(os.path.dirname(__file__))
 
@@ -33,12 +34,13 @@ def simulate_match_wrapper(m1, m2, t, device, nh, ng, ne, seed): # dual match
 
     #m1, m2, t, device, nh, ng, ne, seed = args
     models = [m1, m2]
+    torch.cuda.empty_cache()
     gatingresult = gating_batchpool(models, t, device, Nhistory=nh, ngame=ng, ntask=ne, rseed=seed)
     LW = (gatingresult==0).sum()
     torch.cuda.empty_cache()
     #gatingresult = gating_batchpool(models[::-1], t, device, Nhistory=nh, ngame=ng, ntask=ne, rseed=seed)
     #FW = (np.array(gatingresult)!=0).sum()
-
+    gc.collect()
     return LW #, FW
 
 if __name__ == '__main__':
@@ -53,11 +55,24 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
     
     # determine which models participate in the contest
-    nsim_perplayer = 4000
-    nsim = nsim_perplayer
-    
+    try:
+        nsim_perplayer = int(sys.argv[1])
+        pstart = int(sys.argv[2])
+        pstop = int(sys.argv[3])
+        pstep = int(sys.argv[4])
+        players = [str(i).zfill(10) for i in range(pstart,pstop+1,pstep)]
+        terminate = False
 
-    players = [str(i).zfill(10) for i in range(60000000,80000000+1,5000000)]
+    except:
+        nsim_perplayer = 5000
+        players = [str(i).zfill(10) for i in range(25000000,175000000+1,25000000)]
+        terminate = True
+    
+    if terminate:
+        print('Arguments incomplete. Please provide n-sim, player-start, player-stop (inclusive), player-step.')
+        sys.exit(1)
+
+    nsim = nsim_perplayer
     players.append(players[-1])
     num_processes = min(12,(len(players)-1)*2)
 
@@ -127,7 +142,7 @@ if __name__ == '__main__':
     print(len(args),len(args[0]))
     # Create a pool of workers and distribute the tasks
     with mp.Pool(processes=num_processes) as pool:
-        results = pool.starmap(simulate_match_wrapper, args)
+        results = pool.starmap(simulate_match_wrapper, args, chunksize=len(args)//num_processes)
         #results = list(tqdm(pool.imap_unordered(simulate_match_wrapper, tasks), total=len(tasks)))
 
     #print(len(results))
