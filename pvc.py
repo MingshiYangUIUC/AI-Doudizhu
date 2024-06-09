@@ -116,7 +116,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
     return Deck
 
 def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=None,\
-                   showall=False, bomb=False, thinktime=0, risk_penalty=0.0, seed=None): # Player is 0, 1, 2 for L, D, U
+                   showall=False, bomb=False, thinktime=0, thinkplayer='012', risk_penalty=0.0, seed=None): # Player is 0, 1, 2 for L, D, U
     if seed is None:
         seed = np.random.randint(-100000000,100000000)
     else:
@@ -182,11 +182,11 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
 
         hint = showall and Turn%3==iPlayer
         
-        if (Turn%3==iPlayer and not automatic) or thinktime == 0:
+        if (Turn%3==iPlayer and not automatic) or thinktime == 0 or (str(Turn%3) not in thinkplayer):
             action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
         else:
-            action, Q = get_action_adv_batch(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct=12, nRoll=400, ndepth=36, risk_penalty=risk_penalty,maxtime=thinktime)
+            action, Q = get_action_adv_batch_mp(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
+                                       nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=6, sleep=True)
             if thinktime > 0:
                 #pause += thinktime
                 ts = time.time()
@@ -352,6 +352,7 @@ def main():
     parser.add_argument("-d", "--difficulty", type=int, choices=[1, 2, 3, 4, 5], help="Difficulty level as quality of initial cards. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible.")
     parser.add_argument("-p", "--pausetime", type=float, help="Pause after each move in seconds (float >= 0)")
     parser.add_argument("-th", "--thinktime", type=float, help="AI thinktime (float >= 0)")
+    parser.add_argument("-tp", "--thinkplayer", type=str, help="The player who thinks (string containing 012)")
     parser.add_argument("-rp", "--riskpenalty", type=float, help="AI risk penalty (float >= 0)")
     parser.add_argument("-s", "--seed", type=int, help="Game Seed (int)")
 
@@ -373,9 +374,11 @@ def main():
     if args.thinktime is None:
         args.thinktime = 0.0
     else:
-        args.pausetime = 0.0
+        args.pausetime = 0.1
     if args.riskpenalty is None:
         args.riskpenalty = 0.0
+    if args.thinkplayer is None: # set to everyone think
+        args.thinkplayer = '012'
 
     # Automatic mode check
     if args.automatic:
@@ -388,7 +391,7 @@ def main():
         print("!!!!!!BOMB mode ENABLED!!!!!!")
     
     return args.role, args.automatic, args.showall, args.temperature, args.difficulty, args.pausetime, \
-           args.thinktime, args.riskpenalty, args.bombmode, args.seed
+           args.thinktime, args.thinkplayer, args.riskpenalty, args.bombmode, args.seed
 
 
 if __name__ == '__main__':
@@ -401,7 +404,7 @@ if __name__ == '__main__':
 
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    player, automatic, showall, temperature, difficulty, pause, thinktime, rp, bomb, seed = main()
+    player, automatic, showall, temperature, difficulty, pause, thinktime, thinkplayer, rp, bomb, seed = main()
 
     name = 'H15-V2_2.2'
     if bomb:
@@ -447,7 +450,7 @@ if __name__ == '__main__':
     with torch.no_grad():
         bstrength=200
         Turn, Qs, Log = gamewithplayer(player, [SLM,QV], temperature, pause, N_history, automatic,\
-                                       difficulty, showall, bomb, thinktime, rp, seed)
+                                       difficulty, showall, bomb, thinktime, thinkplayer, rp, seed)
 
     #print(Log)
 

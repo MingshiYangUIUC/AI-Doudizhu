@@ -121,14 +121,14 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
         #print(model_inputs.shape)
         #quit()
+        SL_X.append(model_inputs.clone().detach())
+        SL_Y.append(torch.stack(sl_y))
         # predict state (SL)
         model_inter = model(
             model_inputs.to(torch.float16).to(selfplay_device)
             ).to('cpu').to(torch.float32)
         #print(model_inter.shape)
         #quit()
-        SL_X.append(model_inputs.clone().detach())
-        SL_Y.append(torch.stack(sl_y))
         #print(model_inter.shape,torch.stack(sl_y).shape)
 
         role = torch.zeros((model_inter.shape[0],15)) + Tidx
@@ -168,7 +168,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             acts = acts_list[iout]
 
             if temperature == 0:
-                q = torch.max(output)
+                #q = torch.max(output)
                 best_act = acts[torch.argmax(output)]
             else:
                 # get action using probabilistic approach and temperature
@@ -190,7 +190,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             newst = ''.join(list((cA - cB).elements()))
             newunavail = unavail[_] + action[0]
             newhist = torch.roll(history[_],1,dims=0)
-            newhist[0] = str2state_compressed(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
+            newhiststate = str2state_compressed(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
+            newhist[0] = newhiststate# first row is newest, others are moved downward
 
 
             if action[1][0] == 0:
@@ -210,7 +211,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             nextstate = str2state(newst)
             #print(newst)
 
-            BufferStatesActs[_][Tidx].append(torch.concat([model_inter[iout].clone().detach(),newhist[0].sum(dim=0).clone().detach()]).unsqueeze(0))
+            BufferStatesActs[_][Tidx].append(torch.concat([model_inter[iout].detach(),newhiststate[0].detach()]).unsqueeze(0))
             #BufferRewards[_][Tidx].append(0)
 
             Init_states[_][Tidx] = nextstate
@@ -528,10 +529,12 @@ if __name__ == '__main__':
             )
 
     N_episodes = 512
-    ng = 32
+    ng = 64
     
     seed = random.randint(0,1000000000)
+    seed = 12333
     print(seed)
+    random.seed(seed)
 
     #SLM = Network_Pcard_V2_1(22,7,1,15, 512,512)
     #QV = Network_Qv_Universal_V1_1(6,15,512)
