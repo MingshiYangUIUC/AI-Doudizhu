@@ -512,7 +512,7 @@ if __name__ == '__main__':
         torch.set_num_interop_threads(1)
 
 
-    names = ['H15-V2_2.2_0020000000','H15-V2_2.2_0020000000']
+    '''names = ['H15-V2_2.2_0020000000','H15-V2_2.2_0020000000']
     models = []
     for name in names:
         SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
@@ -526,7 +526,15 @@ if __name__ == '__main__':
 
         models.append(
             [SLM,QV]
-            )
+            )'''
+    SLM = Network_Pcard_V2_1_Trans(15+7, 7, y=1, x=15, trans_heads=4, trans_layers=6, hiddensize=512)
+    #SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
+    QV = Network_Qv_Universal_V1_1(6,15,512)
+    SLM.eval()
+    QV.eval()
+
+    torch.save(SLM.state_dict(),os.path.join(wd,'test_models',f'SLM_Trans.pt'))
+    #torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_Trans.pt'))
 
     N_episodes = 512
     ng = 64
@@ -538,9 +546,9 @@ if __name__ == '__main__':
 
     #SLM = Network_Pcard_V2_1(22,7,1,15, 512,512)
     #QV = Network_Qv_Universal_V1_1(6,15,512)
-
-    out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes)
-    print(out[-1])
+    with torch.no_grad():
+        out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes)
+        print(out[-1])
     
     '''gatingresult = gating_batchpool(models, 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes, rseed=seed)
     print('')

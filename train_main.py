@@ -18,6 +18,7 @@ import os
 import sys
 import gc
 import pickle
+import argparse
 
 def train_model(device, model, criterion, loader, nep, optimizer):
     #scaler = torch.cuda.amp.GradScaler()
@@ -27,15 +28,16 @@ def train_model(device, model, criterion, loader, nep, optimizer):
         running_loss = 0.0
         
         for inputs, targets in tqdm(loader):
-            inputs, targets = inputs.to(device), targets.to(device)
-            
-            optimizer.zero_grad()  # Zero the gradients
-            outputs = model(inputs)  # Forward pass
-            loss = criterion(outputs, targets)  # Calculate loss
-            loss.backward()  # Backward pass
-            optimizer.step()  # Optimize
-            
-            running_loss += loss.item()
+            if inputs.size(0) > 1:
+                inputs, targets = inputs.to(device), targets.to(device)
+                
+                optimizer.zero_grad()  # Zero the gradients
+                outputs = model(inputs)  # Forward pass
+                loss = criterion(outputs, targets)  # Calculate loss
+                loss.backward()  # Backward pass
+                optimizer.step()  # Optimize
+                
+                running_loss += loss.item()
         
         # Calculate the average loss per batch over the epoch
         epoch_loss = running_loss / len(loader)
@@ -71,19 +73,19 @@ def worker(task_params):
     if torch.get_num_threads() > 1:
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
-    models, rand_param, selfplay_device, N_history, chunksize, ip, npr, bchance = task_params
+    models, rand_param, selfplay_device, n_history, chunksize, ip, npr, bchance = task_params
 
     results = []
     torch.cuda.empty_cache()
-    results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, N_history, 64, chunksize.item(), bchance)
+    results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, 64, chunksize.item(), bchance)
     torch.cuda.empty_cache()
     print(f'---------- {str(ip).zfill(2)} / {npr} END----------',end='\r')
     return results
 
-def sampledataset(Total_episodes,N_episodes,N_back,label='L',kk=2):
+def sampledataset(Total_episodes,n_episodes,N_back,label='L',kk=2):
     ds = []
     if N_back > 0:
-        sample = [str(i).zfill(10) for i in list(range(Total_episodes-N_back*N_episodes,Total_episodes,N_episodes))]
+        sample = [str(i).zfill(10) for i in list(range(Total_episodes-N_back*n_episodes,Total_episodes,n_episodes))]
         #print(sample)
         sampled = random.sample(sample,k=kk)
         print(sampled)
@@ -91,89 +93,119 @@ def sampledataset(Total_episodes,N_episodes,N_back,label='L',kk=2):
         for s in sampled:
             try:
                 #print(s)
-                ds.append(torch.load(os.path.join(wd,'train',f'{label}train_{version}_{s}_{N_episodes}')))
+                ds.append(torch.load(os.path.join(wd,'train',f'{label}train_{version}_{s}_{n_episodes}')))
             except:
                 pass
         #print(len(ds))
     return ds
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run the training script with specified parameters.")
+    
+    # master arguments
+    parser.add_argument('-a', '--auto', action='store_true', help="Auto train mode: continue iterating for task episode number")
+    parser.add_argument('-t', '--train', type=int, default=10000, help="Task episode number")
+    parser.add_argument('-q', '--query', action='store_true', help="Query status mode: return most recent model version")
+
+    # model arguments
+    parser.add_argument('--version', type=str, default='V2_2.2', help="Version of the model")
+    parser.add_argument('--n_history', type=int, default=15, help="Number of historic moves in model input")
+    parser.add_argument('--n_feature', type=int, default=7, help="Additional feature size of the model")
+
+    # environment arguments
+    parser.add_argument('--selfplay_device', type=str, default='cuda', help="Device for selfplay games")
+    parser.add_argument('--n_save', type=int, default=100000, help="Number of games to be played before each round of saving")
+    parser.add_argument('--n_processes', type=int, default=14, help="Number of CPU processes used in selfplay")
+    
+    # hyperparameters
+    parser.add_argument('--batch_size', type=int, default=256, help="Batch size for training")
+    parser.add_argument('--n_episodes', type=int, default=25000, help="Number of games to be played before each round of training")
+    parser.add_argument('--n_epoch', type=int, default=1, help="Number of epochs for training")
+    parser.add_argument('--lr1', type=float, default=0.000005/64*256, help="Learning rate for model part 1")
+    parser.add_argument('--lr2', type=float, default=0.000003/64*256, help="Learning rate for model part 2")
+    parser.add_argument('--l2_reg_strength', type=float, default=1e-6, help="L2 regularization strength")
+    parser.add_argument('--rand_param', type=float, default=0.01, help="Random parameter for moves")
+    parser.add_argument('--bomb_chance', type=float, default=0.01, help="Chance of getting a deck full of bombs during selfplay")
+    
+    return parser.parse_args()
+
 if __name__ == '__main__':
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
 
+    args = parse_args()
+
     device = 'cpu'
     selfplay_device = 'cuda'
 
-    N_history = 15 # number of historic moves in model input
-    N_feature = 7
-    version = f'H{str(N_history).zfill(2)}-V2_2.2'
-    #version = f'H{str(N_history).zfill(2)}-V2_1.1'
+    selfplay_device = args.selfplay_device
+    n_history = args.n_history
+    n_feature = args.n_feature
+    version = f'H{str(n_history).zfill(2)}-{args.version}'
 
     term = False
     try:
-        if sys.argv[1] == '-a': # auto detect
+        if args.auto:
             mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if '_'+version+'_' in f]
             if len(mfiles) == 0:
                 Total_episodes = 0
-                migrate=False
+                migrate = False
             else:
                 Total_episodes = max(mfiles)
-                migrate=True
-            Add_episodes = int(sys.argv[2])
+                migrate = True
+            Add_episodes = args.train
             Max_episodes = Total_episodes + Add_episodes
-        elif sys.argv[1] == '-q': # query status
+        elif args.query:
             mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if version in f]
             if len(mfiles) == 0:
                 Total_episodes = 0
-                migrate=False
+                migrate = False
             else:
                 Total_episodes = max(mfiles)
-                migrate=True
+                migrate = True
             Max_episodes = Total_episodes
             print('Current Progress:', Total_episodes)
             term = True
-            #quit()
-    except: # manual entry
-        Total_episodes = 0 # current episode / model version
-        Max_episodes   = 10000 # episode to stop. multiple of 50000
-        migrate=False
-    
+    except:
+        Total_episodes = 0
+        Max_episodes = 10000
+        migrate = False
+
     if term:
         sys.exit(0)
 
     print('B',Total_episodes, 'E',Max_episodes)
     
-    N_episodes     = 25000 # number of games to be played before each round of training
+    n_episodes = args.n_episodes
+    Save_frequency = args.n_save
+    n_process = args.n_processes
+    batch_size = args.batch_size
+    nepoch = args.n_epoch
+    LR1 = args.lr1
+    LR2 = args.lr2
+    l2_reg_strength = args.l2_reg_strength
+    rand_param = args.rand_param
+    bomb_chance = args.bomb_chance
 
-    Save_frequency = 100000
-
-    nprocess = 14 # number of process in selfplay
 
     # transfer weights from another version (need same model structure)
-    transfer = False
-    transfer_name = ''
+    #transfer = False
+    #transfer_name = ''
 
-    batch_size = 256
-    nepoch = 1
-    LR1 = 0.000005/64*batch_size
-    LR2 = 0.000003/64*batch_size
-    l2_reg_strength = 1e-6
-
-    rand_param = 0.01 # "epsilon":" chance of pure random move; or "temperature" in the softmax version
-    bomb_chance = 0.01 # chance of getting a deck full of bombs during selfplay
-
-    n_past_ds = 10 # augment using since last NP datasets.
-    n_choice_ds = 1 # choose NC from last NP datasets
+    #n_past_ds = 10 # augment using since last NP datasets.
+    #n_choice_ds = 1 # choose NC from last NP datasets
 
     n_worker = 0 # default dataloader
 
-    #LM, DM, UM = Network_Pcard(N_history+N_feature),Network_Pcard(N_history+N_feature),Network_Pcard(N_history+N_feature)
-    SLM = Network_Pcard_V2_1(N_history+N_feature, N_feature, y=1, x=15, lstmsize=512, hiddensize=1024)
-    QV = Network_Qv_Universal_V1_1(6,15,1024)
+    #SLM = Network_Pcard_V2_1(n_history+n_feature, n_feature, y=1, x=15, lstmsize=512, hiddensize=1024)
+    #QV = Network_Qv_Universal_V1_1(6,15,1024)
 
-    #quit()
-    #print(LM.nhist)
+    SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=512, hiddensize=512)
+    QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+    #SLM = Network_Pcard_V2_1_Trans(n_history+n_feature, n_feature, y=1, trans_heads=4, trans_layers=6, hiddensize=512)
+    #QV = Network_Qv_Universal_V1_1(6,15,512)
+
     print('Init wt',SLM.fc2.weight.data[0].mean().item())
 
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
@@ -193,20 +225,20 @@ if __name__ == '__main__':
         SL_X = []
         SL_Y = []
         cs = 1
-        chunksizes = torch.diff(torch.torch.linspace(0,N_episodes,nprocess*cs+1).type(torch.int64))
+        chunksizes = torch.diff(torch.torch.linspace(0,n_episodes,n_process*cs+1).type(torch.int64))
 
         t0 = time.time()
-        with mp.Pool(nprocess) as pool:
+        with mp.Pool(n_process) as pool:
             print(version, 'Playing games')
 
             SLM.eval()
             QV.eval()
 
-            tasks = [([SLM, QV], rand_param, selfplay_device, N_history, chunksizes[_], _, nprocess, bomb_chance) for _ in range(nprocess*cs)]
+            tasks = [([SLM, QV], rand_param, selfplay_device, n_history, chunksizes[_], _, n_process, bomb_chance) for _ in range(n_process*cs)]
 
             results = list(pool.imap_unordered(worker, tasks, chunksize=cs))
         
-        Total_episodes += N_episodes
+        Total_episodes += n_episodes
         t1 = time.time()
         print(version, 'Played games:',Total_episodes, 'Elapsed time:', round(t1-t0))
         torch.cuda.empty_cache()
@@ -236,7 +268,7 @@ if __name__ == '__main__':
         SL_Y = torch.cat(SL_Y)
 
         #STAT[1:] = np.sum(STAT[1:])
-        print('Game Stat:',np.round((STAT/N_episodes)*100,2))
+        print('Game Stat:',np.round((STAT/n_episodes)*100,2))
 
         print(SL_X.shape,SL_Y.shape)
 

@@ -65,7 +65,7 @@ if __name__ == '__main__':
 
     except:
         nsim_perplayer = 5000
-        players = [str(i).zfill(10) for i in range(25000000,175000000+1,25000000)]
+        players = [str(i).zfill(10) for i in range(5000000,5000000+1,5000000)]
         terminate = True
     
     if terminate:
@@ -78,7 +78,7 @@ if __name__ == '__main__':
 
     gate_player_index = len(players)-1 # other players play with this player
 
-    versions = ['H15-V2_2.2']
+    versions = ['H15-V2_2.3']
 
 
     models = []
@@ -95,12 +95,18 @@ if __name__ == '__main__':
             #SLM = Network_Pcard_V1_1(20,5)
             #QV = Network_Qv_Universal_V1_1(6,15,512)
             # V2_2_1
-            SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
-            QV = Network_Qv_Universal_V1_1(6,15,1024)
+            try:
+                SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
+                QV = Network_Qv_Universal_V1_1_BN(6,15,512)
 
-            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            except:
+                SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
+                QV = Network_Qv_Universal_V1_1(6,15,1024)
 
+                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
             SLM.eval()
             QV.eval()
 
@@ -139,10 +145,10 @@ if __name__ == '__main__':
             args.append((models[i], models[gate_player_index], 0,'cuda',15,64,nsim_perplayer,seed))
             args.append((models[gate_player_index], models[i], 0,'cuda',15,64,nsim_perplayer,seed))
 
-    print(len(args),len(args[0]))
+    print(len(args),len(args[0]),len(models))
     # Create a pool of workers and distribute the tasks
     with mp.Pool(processes=num_processes) as pool:
-        results = pool.starmap(simulate_match_wrapper, args, chunksize=len(args)//num_processes)
+        results = pool.starmap(simulate_match_wrapper, args, chunksize=1)
         #results = list(tqdm(pool.imap_unordered(simulate_match_wrapper, tasks), total=len(tasks)))
 
     #print(len(results))
@@ -160,6 +166,9 @@ if __name__ == '__main__':
     ngames = np.zeros(len(results)+1).astype(np.int64)+nsim
     ngames[-1] = (nsim)*(len(results))
     fullstat = np.append(fullstat,ngames[:,None],axis=1)
+    if len(versions) > 1:
+        print(fullstat)
+        quit()
     Fullstat += fullstat
 
     for i in range(nplayer):

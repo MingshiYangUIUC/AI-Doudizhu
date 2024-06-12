@@ -15,6 +15,7 @@ data
 train
 games
 models
+test_models
 __pycache__
 tmp
 dev_code
