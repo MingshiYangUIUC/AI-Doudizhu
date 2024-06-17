@@ -37,8 +37,19 @@ def emptystate():
 def emptystate_npy():
     return np.zeros((4,15),dtype=np.float32)
 
+def emptystate_npy_1D(): # *15 (omitted first axis) instead of 4*15
+    return np.zeros(15,dtype=np.float32)
+
 #@profile
 def state2str(Nelems):
+    st = ''
+    for i in range(15):
+        k = r2c_base[i]
+        for r in range(int(Nelems[i])):
+            st += k
+    return st
+
+def state2str_1D(Nelems): # no change (the state is the same as Nelems)
     st = ''
     for i in range(15):
         k = r2c_base[i]
@@ -57,6 +68,14 @@ def state2list(state):
 
 #@profile
 def state2list2(Nelems):
+    ls = []
+    for i in range(15):
+        k = r2c_base[i]
+        for r in range(int(Nelems[i])):
+            ls.append(k)
+    return ls
+
+def state2list_1D(Nelems): # no change (the state is the same as Nelems)
     ls = []
     for i in range(15):
         k = r2c_base[i]
@@ -86,6 +105,13 @@ def str2state_compressed_1D(st):
         state[c2r_base[char]] = count
     return torch.from_numpy(state)
 
+def str2state_1D(st): # same as str2state_compressed_1D
+    ct = Counter(st)
+    state = np.zeros(15,dtype=np.float32)
+    for char, count in ct.items():
+        state[c2r_base[char]] = count
+    return torch.from_numpy(state)
+
 # create action based on last state
 # create type along with action!
 def all_bombs_new(Nelems):
@@ -99,7 +125,7 @@ def all_bombs_new(Nelems):
 # create type along with action!
 
 #@profile
-def all_actions(mystate,forcemove=0):
+def all_actions(mystate,forcemove=0): # now mystate is the same shape as Nelems
     #mystate = str2state('567899XXXJQKKKB')
     # opinfo is (type, rank)
     # action is string of stuff '34567' or 'BR' for black.red joker
@@ -108,7 +134,8 @@ def all_actions(mystate,forcemove=0):
     # return all
 
     # 0 pass
-    Nelems = mystate.sum(dim=0).numpy()
+    # Nelems = mystate.sum(dim=0).numpy()
+    Nelems = mystate.clone().detach().numpy()
 
     if not forcemove:
         out = [['',(0,0)]]
@@ -252,14 +279,15 @@ def all_actions(mystate,forcemove=0):
     return out
 
 #@profile
-def avail_actions(opact,opinfo,mystate,forcemove=0):
+def avail_actions(opact,opinfo,mystate,forcemove=0): # now mystate is the same shape as Nelems
     # opinfo is (type, rank)
     # action is string of stuff '34567' or 'BR' for black.red joker
     # return as "action, type, rank"
     #print(opinfo)
     if opinfo[0] != 0:
 
-        Nelems = mystate.sum(dim=0).numpy()
+        # Nelems = mystate.sum(dim=0).numpy()
+        Nelems = mystate.clone().detach().numpy()
 
         # Find action based on previous state
         # Assign unique type to new actions
@@ -341,21 +369,21 @@ def avail_actions(opact,opinfo,mystate,forcemove=0):
         elif opinfo[0] == 9: # abcde sequence
             # return all larger sequences of same length
             l = len(opact)
-            out = [[''.join(r2c_base[j] for j in range(i,i+l)),(9,i)] for i in range(opinfo[1]+1,13-l) if mystate[-1,i:i+l].sum() == l]
+            out = [[''.join(r2c_base[j] for j in range(i,i+l)),(9,i)] for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 1]
             out += all_bombs_new(Nelems)
             #return out
         
         elif opinfo[0] == 10: # xxyyzz double sequence
             # return all larger d sequences of same length
             l = int(len(opact)/2)
-            out = [[''.join(r2c_base[j]*2 for j in range(i,i+l)),(10,i)] for i in range(opinfo[1]+1,13-l) if mystate[-2:,i:i+l].sum() == l*2]
+            out = [[''.join(r2c_base[j]*2 for j in range(i,i+l)),(10,i)] for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 2]
             out += all_bombs_new(Nelems)
             #return out
         
         elif opinfo[0] == 11: # xxxyyy triple sequence
             # return all larger d sequences of same length
             l = int(len(opact)/3)
-            out = [[''.join(r2c_base[j]*3 for j in range(i,i+l)),(11,i)] for i in range(opinfo[1]+1,13-l) if mystate[-3:,i:i+l].sum() == l*3]
+            out = [[''.join(r2c_base[j]*3 for j in range(i,i+l)),(11,i)] for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 3]
             out += all_bombs_new(Nelems)
             #return out
         
@@ -363,7 +391,7 @@ def avail_actions(opact,opinfo,mystate,forcemove=0):
             # return all larger d sequences of same length
             stls = state2list2(Nelems)
             l = int(len(opact)/4)
-            triseq = [[''.join(r2c_base[j]*3 for j in range(i,i+l)),(12,i)] for i in range(opinfo[1]+1,13-l) if mystate[-3:,i:i+l].sum() == l*3]
+            triseq = [[''.join(r2c_base[j]*3 for j in range(i,i+l)),(12,i)] for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 3]
             out = []
             for ts in triseq:
                 tsls = [t for t in ts[0]]
@@ -380,7 +408,7 @@ def avail_actions(opact,opinfo,mystate,forcemove=0):
             # return all larger d sequences of same length
             stls = state2list2(Nelems)
             l = int(len(opact)/5)
-            triseq = [[''.join(r2c_base[j]*3 for j in range(i,i+l)),(13,i)] for i in range(opinfo[1]+1,13-l) if mystate[-3:,i:i+l].sum() == l*3]
+            triseq = [[''.join(r2c_base[j]*3 for j in range(i,i+l)),(13,i)] for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 3]
             out = []
             for ts in triseq:
                 tsls = [t for t in ts[0]]
@@ -408,8 +436,7 @@ def avail_actions(opact,opinfo,mystate,forcemove=0):
         return all_actions(mystate,forcemove)
 
 
-def cards2action(cards):
-    from collections import Counter
+def cards2action(cards): # from str representation to action type and rank
 
     count = Counter(cards)
     values = list(count.values())
@@ -482,10 +509,10 @@ def init_game_3card(): # landlord has 3 more cards, which are visible to all
     B = L[-3:] # the three cards that are visible to all
     U = ''.join([st[i] for i in idx[20:37]])
     D = ''.join([st[i] for i in idx[37:]])
-    Lst = str2state(L)
-    Ust = str2state(U)
-    Dst = str2state(D)
-    Bst = str2state(B)
+    Lst = str2state_1D(L)
+    Ust = str2state_1D(U)
+    Dst = str2state_1D(D)
+    Bst = str2state_1D(B)
     return [Lst,Ust,Dst,Bst]
 
 def init_game_3card_bombmode(strength=200):
@@ -530,10 +557,10 @@ def init_game_3card_bombmode(strength=200):
     D.sort(key=lambda card: c2r_base[card])
     B.sort(key=lambda card: c2r_base[card])
     
-    Lst = str2state(''.join(L))
-    Ust = str2state(''.join(U))
-    Dst = str2state(''.join(D))
-    Bst = str2state(''.join(B))
+    Lst = str2state_1D(''.join(L))
+    Ust = str2state_1D(''.join(U))
+    Dst = str2state_1D(''.join(D))
+    Bst = str2state_1D(''.join(B))
     return [Lst+Bst,Ust,Dst,Bst]
 
 # Example of using the function

@@ -17,8 +17,12 @@ from base_utils import *
 def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100, bombchance=0.01):
     #print('Init wt',Models[0].fc2.weight.data[0].mean())
     #quit()
-    Models[0].to(torch.float16).to(selfplay_device)  # SL
-    Models[-1].to(torch.float16).to(selfplay_device) # QM
+    if selfplay_device == 'cuda':
+        dtypem = torch.float16
+        Models[0].to(dtypem).to(selfplay_device)  # SL
+        Models[-1].to(dtypem).to(selfplay_device) # QM
+    else:
+        dtypem = torch.float32
 
     Index = np.arange(ngame)
     Active = [True for _ in range(ngame)]
@@ -29,8 +33,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     
     Visible_states = [ist[-1] for ist in Init_states] # the 3 card matrix
 
-    unavail = ['' for _ in range(ngame)]
-    history = [torch.zeros((Nhistory,1,15)) for _ in range(ngame)]
+    unavail = [torch.zeros(15) for _ in range(ngame)]
+    history = [torch.zeros((Nhistory,15)) for _ in range(ngame)]
     lastmove = [['',(0,0)] for _ in range(ngame)]
     newlast = [[] for _ in range(ngame)]
 
@@ -78,8 +82,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             #print(Tidx)
             #playerstate, model = Init_states[_][Tidx], Models[Tidx] # Same model should be used for all Active
             playerstate = Init_states[_][Tidx]
-            upper_state = Init_states[_][:-1][(Tidx-1)%3].sum(dim=0)
-            lower_state = Init_states[_][:-1][(Tidx+1)%3].sum(dim=0)
+            upper_state = Init_states[_][:-1][(Tidx-1)%3]#.sum(dim=0)
+            lower_state = Init_states[_][:-1][(Tidx+1)%3]#.sum(dim=0)
             sl_y.append(torch.cat((upper_state,lower_state)))
             #print(Turn)
             visible = Visible_states[_] # 3 cards from landlord, fixed for one full game
@@ -94,17 +98,20 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             # get actions
             #print('a')
             #print(Forcemove[_])
+            
+
             acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
 
             # add states and visible to big state
 
-            Bigstate = torch.cat([playerstate.sum(axis=-2,keepdims=True).unsqueeze(0),
-                                  #str2state(unavail[_]).sum(axis=-2,keepdims=True).unsqueeze(0),
-                                  str2state_compressed(unavail[_]).unsqueeze(0),
-                                  CC.unsqueeze(1),
-                                  visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
-                                  torch.zeros((1,15)).unsqueeze(0) + Tidx, # role feature
+            Bigstate = torch.cat([playerstate.unsqueeze(0),
+                                  #str2state_1D(unavail[_]).unsqueeze(0),
+                                  unavail[_].unsqueeze(0),
+                                  CC,
+                                  visible.unsqueeze(0), # new feature
+                                  torch.zeros(15).unsqueeze(0) + Tidx, # role feature
                                   history[_]])
+            Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
 
             # generate inputs
             # hinput = Bigstate.unsqueeze(0)
@@ -125,7 +132,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         SL_Y.append(torch.stack(sl_y))
         # predict state (SL)
         model_inter = model(
-            model_inputs.to(torch.float16).to(selfplay_device)
+            model_inputs.to(dtypem).to(selfplay_device)
             ).to('cpu').to(torch.float32)
         #print(model_inter.shape)
         #quit()
@@ -133,17 +140,13 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
         role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
-        model_inter = torch.concat([model_inputs[:,0].sum(dim=-2), # self
-                                    model_inputs[:,7].sum(dim=-2), # history
+        model_inter = torch.concat([model_inputs[:,0,0], # self
+                                    model_inputs[:,7,0], # history
                                     model_inter, # upper and lower states
                                     role],dim=-1)
         model_input2 = []
 
         for i, mi in enumerate(model_inter):
-            #input_i = torch.stack([
-            #    torch.cat((mi,str2state_compressed_1D(a[0]))) for a in acts_list[i]])
-            #model_input2.append(input_i)
-
             actions_tensor = torch.stack([str2state_compressed_1D(a[0]) for a in acts_list[i]])
             mi_expanded = mi.unsqueeze(0).expand(actions_tensor.shape[0],-1)  # Expand mi to match the batch size of actions_tensor
             input_i = torch.cat((mi_expanded, actions_tensor), dim=1)
@@ -151,7 +154,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
         #print(model_inter.shape)
         #quit()
-        model_output = Models[-1](torch.cat(model_input2).to(torch.float16).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+        model_output = Models[-1](torch.cat(model_input2).to(dtypem).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
 
 
         # conduct actions for all instances
@@ -184,13 +187,16 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 Forcemove[_] = False
 
             # conduct a move
-            myst = state2str(playerstate.sum(dim=0).numpy())
-            cA = Counter(myst)
-            cB = Counter(action[0])
-            newst = ''.join(list((cA - cB).elements()))
-            newunavail = unavail[_] + action[0]
+            #myst = state2str(playerstate.numpy())
+            #cA = Counter(myst)
+            #cB = Counter(action[0])
+            #newst = ''.join(list((cA - cB).elements()))
+            newhiststate = str2state_1D(action[0])
+            newst = playerstate - newhiststate
+            newunavail = unavail[_] + newhiststate
             newhist = torch.roll(history[_],1,dims=0)
-            newhiststate = str2state_compressed(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
+            #newhiststate = str2state_1D(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
+            
             newhist[0] = newhiststate# first row is newest, others are moved downward
 
 
@@ -208,10 +214,11 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 Cpass[_] = 0
 
             # record and update
-            nextstate = str2state(newst)
+            #nextstate = str2state_1D(newst)
+            nextstate = newst
             #print(newst)
 
-            BufferStatesActs[_][Tidx].append(torch.concat([model_inter[iout].detach(),newhiststate[0].detach()]).unsqueeze(0))
+            BufferStatesActs[_][Tidx].append(torch.concat([model_inter[iout].detach(),newhiststate.detach()]).unsqueeze(0))
             #BufferRewards[_][Tidx].append(0)
 
             Init_states[_][Tidx] = nextstate
@@ -219,7 +226,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             history[_] = newhist
             lastmove[_] = newlast[_]
 
-            if len(newst) == 0:
+            if newst.max() == 0:
                 BufferRewards[_][Tidx] = 1 #[torch.as_tensor(BufferRewards[_][Tidx],dtype=torch.float32)+1]
                 if Tidx == 1:
                     stat[1] += 1
@@ -274,7 +281,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 #Init_states[_] = init_game_3card()
                 Init_states[_] = init_game_3card_bombmode() if random.choices([True, False], weights=[bombchance, 1-bombchance])[0] else init_game_3card()
                 Visible_states[_] = Init_states[_][-1]
-                unavail[_] = ''
+                unavail[_] = torch.zeros(15)
                 lastmove[_] = ['',(0,0)]
                 newlast[_] = []
                 Npass[_] = 0
