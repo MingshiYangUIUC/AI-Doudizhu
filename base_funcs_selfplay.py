@@ -311,11 +311,14 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
     # use two sets of models, first set plays as landlord
     random.seed(rseed)
 
-    Models[0][0].to(torch.float16).to(selfplay_device)  # SL for p1
-    Models[0][1].to(torch.float16).to(selfplay_device) # QM for p1
-
-    Models[1][0].to(torch.float16).to(selfplay_device)  # SL for p2
-    Models[1][1].to(torch.float16).to(selfplay_device) # QM for p2
+    if selfplay_device == 'cuda':
+        dtypem = torch.float16
+        Models[0][0].to(dtypem).to(selfplay_device)  # SL for p1
+        Models[0][1].to(dtypem).to(selfplay_device) # QM for p1
+        Models[1][0].to(dtypem).to(selfplay_device)  # SL for p2
+        Models[1][1].to(dtypem).to(selfplay_device) # QM for p2
+    else:
+        dtypem = torch.float32
 
     Index = torch.arange(ngame)
     Active = [True for _ in range(ngame)]
@@ -323,8 +326,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
     Init_states = [init_game_3card() for _ in range(ngame)] # [Lstate, Dstate, Ustate]
     Visible_states = [ist[-1] for ist in Init_states] # the 3 card matrix
 
-    unavail = ['' for _ in range(ngame)]
-    history = [torch.zeros((Nhistory,1,15)) for _ in range(ngame)]
+    unavail = [torch.zeros(15) for _ in range(ngame)]
+    history = [torch.zeros((Nhistory,15)) for _ in range(ngame)]
     lastmove = [['',(0,0)] for _ in range(ngame)]
     newlast = [[] for _ in range(ngame)]
 
@@ -367,13 +370,14 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
 
             # add states and visible to big state
-            Bigstate = torch.cat([playerstate.sum(axis=-2,keepdims=True).unsqueeze(0),
-                                  #str2state(unavail[_]).sum(axis=-2,keepdims=True).unsqueeze(0),
-                                  str2state_compressed(unavail[_]).unsqueeze(0),
-                                  CC.unsqueeze(1),
-                                  visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
-                                  torch.zeros((1,15)).unsqueeze(0) + Tidx, # role feature
+            Bigstate = torch.cat([playerstate.unsqueeze(0),
+                                  #str2state_1D(unavail[_]).unsqueeze(0),
+                                  unavail[_].unsqueeze(0),
+                                  CC,
+                                  visible.unsqueeze(0), # new feature
+                                  torch.zeros(15).unsqueeze(0) + Tidx, # role feature
                                   history[_]])
+            Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
 
             # generate inputs
             model_inputs.append(Bigstate.unsqueeze(0))
@@ -394,22 +398,22 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
 
         # predict state (SL)
         model_inter = modelS(
-            model_inputs.to(torch.float16).to(selfplay_device)
+            model_inputs.to(dtypem).to(selfplay_device)
             ).to('cpu').to(torch.float32)
 
         role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
-        model_inter = torch.concat([model_inputs[:,0].sum(dim=-2), # self
-                                    model_inputs[:,7].sum(dim=-2), # history
+        model_inter = torch.concat([model_inputs[:,0,0], # self
+                                    model_inputs[:,7,0], # history
                                     model_inter, # upper and lower states
                                     role],dim=-1)
         model_input2 = []
 
         for i, mi in enumerate(model_inter):
-            input_i = torch.stack([torch.cat((mi,str2state(a[0]).sum(dim=0))) for a in acts_list[i]])
+            input_i = torch.stack([torch.cat((mi,str2state_1D(a[0]))) for a in acts_list[i]])
             model_input2.append(input_i)
 
-        model_output = modelQ(torch.cat(model_input2).to(torch.float16).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+        model_output = modelQ(torch.cat(model_input2).to(dtypem).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
 
         torch.cuda.empty_cache()
 
@@ -443,13 +447,17 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
                 Forcemove[_] = False
 
             # conduct a move
-            myst = state2str(playerstate.sum(dim=0).numpy())
-            cA = Counter(myst)
-            cB = Counter(action[0])
-            newst = ''.join(list((cA - cB).elements()))
-            newunavail = unavail[_] + action[0]
+            #myst = state2str(playerstate.numpy())
+            #cA = Counter(myst)
+            #cB = Counter(action[0])
+            #newst = ''.join(list((cA - cB).elements()))
+            newhiststate = str2state_1D(action[0])
+            newst = playerstate - newhiststate
+            newunavail = unavail[_] + newhiststate
             newhist = torch.roll(history[_],1,dims=0)
-            newhist[0] = str2state_compressed(action[0]) #newhist[0] = str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
+            #newhiststate = str2state_1D(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
+            
+            newhist[0] = newhiststate# first row is newest, others are moved downward
 
             if action[1][0] == 0:
                 Cpass[_] += 1
@@ -465,7 +473,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
                 Cpass[_] = 0
 
             # record and update
-            nextstate = str2state(newst)
+            #nextstate = str2state_1D(newst)
+            nextstate = newst
             #print(newst)
 
             Init_states[_][Tidx] = nextstate
@@ -473,7 +482,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             history[_] = newhist
             lastmove[_] = newlast[_]
 
-            if len(newst) == 0:
+            if newst.max() == 0:
                 
                 Active[_] = False
 
@@ -494,7 +503,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
                 Turn[_] = 0
                 Init_states[_] = init_game_3card()
                 Visible_states[_] = Init_states[_][-1]
-                unavail[_] = ''
+                #unavail[_] = ''
+                unavail[_] = torch.zeros(15)
                 lastmove[_] = ['',(0,0)]
                 newlast[_] = []
                 Npass[_] = 0
