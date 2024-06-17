@@ -82,8 +82,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             #print(Tidx)
             #playerstate, model = Init_states[_][Tidx], Models[Tidx] # Same model should be used for all Active
             playerstate = Init_states[_][Tidx]
-            upper_state = Init_states[_][:-1][(Tidx-1)%3]#.sum(dim=0)
-            lower_state = Init_states[_][:-1][(Tidx+1)%3]#.sum(dim=0)
+            upper_state = Init_states[_][(Tidx-1)%3]#.sum(dim=0)
+            lower_state = Init_states[_][(Tidx+1)%3]#.sum(dim=0)
             sl_y.append(torch.cat((upper_state,lower_state)))
             #print(Turn)
             visible = Visible_states[_] # 3 cards from landlord, fixed for one full game
