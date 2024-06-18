@@ -73,11 +73,11 @@ def worker(task_params):
     if torch.get_num_threads() > 1:
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
-    models, rand_param, selfplay_device, n_history, chunksize, ip, npr, bchance = task_params
+    models, rand_param, selfplay_device, selfplay_batch_size, n_history, chunksize, ip, npr, bchance = task_params
 
     results = []
     torch.cuda.empty_cache()
-    results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, 64, chunksize.item(), bchance)
+    results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, selfplay_batch_size, chunksize.item(), bchance)
     torch.cuda.empty_cache()
     print(f'---------- {str(ip).zfill(2)} / {npr} END----------',end='\r')
     return results
@@ -117,6 +117,7 @@ def parse_args():
     parser.add_argument('--selfplay_device', type=str, default='cuda', help="Device for selfplay games")
     parser.add_argument('--n_save', type=int, default=100000, help="Number of games to be played before each round of saving")
     parser.add_argument('--n_processes', type=int, default=14, help="Number of CPU processes used in selfplay")
+    parser.add_argument('--selfplay_batch_size', type=int, default=32, help="Batch number of concurrent games send to GPU by each process")
     
     # hyperparameters
     parser.add_argument('--batch_size', type=int, default=256, help="Batch size for training")
@@ -140,6 +141,7 @@ if __name__ == '__main__':
     selfplay_device = 'cuda'
 
     selfplay_device = args.selfplay_device
+    selfplay_batch_size = args.selfplay_batch_size
     n_history = args.n_history
     n_feature = args.n_feature
     version = f'H{str(n_history).zfill(2)}-{args.version}'
@@ -234,7 +236,7 @@ if __name__ == '__main__':
             SLM.eval()
             QV.eval()
 
-            tasks = [([SLM, QV], rand_param, selfplay_device, n_history, chunksizes[_], _, n_process, bomb_chance) for _ in range(n_process*cs)]
+            tasks = [([SLM, QV], rand_param, selfplay_device, selfplay_batch_size, n_history, chunksizes[_], _, n_process, bomb_chance) for _ in range(n_process*cs)]
 
             results = list(pool.imap_unordered(worker, tasks, chunksize=cs))
         
