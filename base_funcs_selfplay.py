@@ -89,7 +89,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             visible = Visible_states[_] # 3 cards from landlord, fixed for one full game
 
             # get card count
-            card_count = [int(p.sum()) for p in Init_states[_]]
+            card_count = [int(p.sum()) for p in Init_states[_][:-1]]
             CC = torch.zeros((3,15))
             CC[0][:min(card_count[0],15)] = 1
             CC[1][:min(card_count[1],15)] = 1
@@ -109,7 +109,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                                   unavail[_].unsqueeze(0),
                                   CC,
                                   visible.unsqueeze(0), # new feature
-                                  torch.zeros(15).unsqueeze(0) + Tidx, # role feature
+                                  torch.full((1, 15), Tidx),
                                   history[_]])
             Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
 
@@ -360,7 +360,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             visible = Visible_states[_] # 3 cards from landlord, fixed for one full game
 
             # get card count
-            card_count = [int(p.sum()) for p in Init_states[_]]
+            card_count = [int(p.sum()) for p in Init_states[_][:-1]]
             CC = torch.zeros((3,15))
             CC[0][:min(card_count[0],15)] = 1
             CC[1][:min(card_count[1],15)] = 1
@@ -375,7 +375,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
                                   unavail[_].unsqueeze(0),
                                   CC,
                                   visible.unsqueeze(0), # new feature
-                                  torch.zeros(15).unsqueeze(0) + Tidx, # role feature
+                                  torch.full((1, 15), Tidx),
                                   history[_]])
             Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
 
