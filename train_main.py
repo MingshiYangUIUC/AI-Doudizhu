@@ -19,6 +19,18 @@ import sys
 import gc
 import pickle
 import argparse
+from datetime import datetime, timezone
+
+def set_seed(seed):
+    # Set the seed for generating random numbers
+    torch.manual_seed(seed)
+    # Set the seed for generating random numbers for CUDA if you are using GPU
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # Set the seed for NumPy
+    np.random.seed(seed)
+    # Set the seed for Python random module
+    random.seed(seed)
 
 def train_model(device, model, criterion, loader, nep, optimizer):
     #scaler = torch.cuda.amp.GradScaler()
@@ -42,7 +54,7 @@ def train_model(device, model, criterion, loader, nep, optimizer):
         # Calculate the average loss per batch over the epoch
         epoch_loss = running_loss / len(loader)
         print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
-    return model
+    return model, epoch_loss
 
 
 def train_model_amp(device, model, criterion, loader, nep, optimizer):
@@ -73,6 +85,10 @@ def worker(task_params):
     if torch.get_num_threads() > 1:
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
+    
+    worker_seed = int((time.time() * 1000) * os.getpid()) % (2**32)
+    set_seed(worker_seed)
+
     models, rand_param, selfplay_device, selfplay_batch_size, n_history, chunksize, ip, npr, bchance = task_params
 
     results = []
@@ -107,6 +123,7 @@ def parse_args():
     parser.add_argument('-a', '--auto', action='store_true', help="Auto train mode: continue iterating for task episode number")
     parser.add_argument('-t', '--train', type=int, default=10000, help="Task episode number")
     parser.add_argument('-q', '--query', action='store_true', help="Query status mode: return most recent model version")
+    parser.add_argument('-l', '--logging', action='store_true', help="Log training status")
 
     # model arguments
     parser.add_argument('--version', type=str, default='V2_2.2', help="Version of the model")
@@ -128,6 +145,10 @@ def parse_args():
     parser.add_argument('--l2_reg_strength', type=float, default=1e-6, help="L2 regularization strength")
     parser.add_argument('--rand_param', type=float, default=0.01, help="Random parameter for moves")
     parser.add_argument('--bomb_chance', type=float, default=0.01, help="Chance of getting a deck full of bombs during selfplay")
+    parser.add_argument('--m_par0', type=int, default=512, help="Model parameter 0")
+    parser.add_argument('--m_par1', type=int, default=512, help="Model parameter 1")
+    parser.add_argument('--m_par2', type=int, default=512, help="Model parameter 2")
+    parser.add_argument('--m_seed', type=int, default=20010101, help="Model init seed")
     
     return parser.parse_args()
 
@@ -149,7 +170,7 @@ if __name__ == '__main__':
     term = False
     try:
         if args.auto:
-            mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if '_'+version+'_' in f]
+            mfiles = [int(f.split('_')[-1][:-3]) for f in os.listdir(os.path.join(wd,'models')) if '_'+version+'_' in f]
             if len(mfiles) == 0:
                 Total_episodes = 0
                 migrate = False
@@ -159,7 +180,7 @@ if __name__ == '__main__':
             Add_episodes = args.train
             Max_episodes = Total_episodes + Add_episodes
         elif args.query:
-            mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if version in f]
+            mfiles = [int(f.split('_')[-1][:-3]) for f in os.listdir(os.path.join(wd,'models')) if '_'+version+'_' in f]
             if len(mfiles) == 0:
                 Total_episodes = 0
                 migrate = False
@@ -184,8 +205,8 @@ if __name__ == '__main__':
     n_process = args.n_processes
     batch_size = args.batch_size
     nepoch = args.n_epoch
-    LR1 = args.lr1
-    LR2 = args.lr2
+    LR1 = args.lr1 / 64 * batch_size
+    LR2 = args.lr2 / 64 * batch_size
     l2_reg_strength = args.l2_reg_strength
     rand_param = args.rand_param
     bomb_chance = args.bomb_chance
@@ -202,11 +223,20 @@ if __name__ == '__main__':
 
     #SLM = Network_Pcard_V2_1(n_history+n_feature, n_feature, y=1, x=15, lstmsize=512, hiddensize=1024)
     #QV = Network_Qv_Universal_V1_1(6,15,1024)
-
-    SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=512, hiddensize=512)
-    QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+    random_seed = random.randint(0,2**32-1)
+    if Total_episodes == 0:
+        set_seed(args.m_seed)
+    if args.logging and Total_episodes == 0:
+        f = open(os.path.join(wd,'logs',f'training_stat_{version}.txt'),'w')
+        f.write(f'Model init seed: {args.m_seed}\n')
+        f.close()
+    
+    SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
+    QV = Network_Qv_Universal_V1_1_BN(6,15,args.m_par2)
     #SLM = Network_Pcard_V2_1_Trans(n_history+n_feature, n_feature, y=1, trans_heads=4, trans_layers=6, hiddensize=512)
     #QV = Network_Qv_Universal_V1_1(6,15,512)
+    # reset seed to random after initialization
+    set_seed(random_seed)
 
     print('Init wt',SLM.fc2.weight.data[0].mean().item())
 
@@ -278,7 +308,7 @@ if __name__ == '__main__':
         train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker)#, pin_memory=True)
         opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
-        SLM = train_model('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
+        SLM, slm_loss = train_model('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         SLM.to(device)
         print('Sample wt SL',SLM.fc2.weight.data[0].mean().item())
 
@@ -290,7 +320,7 @@ if __name__ == '__main__':
         train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker)#, pin_memory=True)
         opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
-        QV = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
+        QV, qv_loss = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
         QV.to(device)
         print('Sample wt QV',QV.fc2.weight.data[0].mean().item())
 
@@ -305,6 +335,17 @@ if __name__ == '__main__':
         te = time.time()
         
         print('Episode time:', round(te-t0),'\n')
+
+        if args.logging:
+            # log status to file with name according to version
+            f = open(os.path.join(wd,'logs',f'training_stat_{version}.txt'),'a')
+            # episodes, game stats, train error, 
+            f.write(f'Training phase done at UTC {datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")}\n')
+            f.write(f'Simulated Episodes: {Total_episodes}\n')
+            roundstat = np.round((STAT/n_episodes)*100,4)
+            f.write(f'Player status L F0 F1: {roundstat[0]}, {roundstat[1]}, {roundstat[2]}\n')
+            f.write(f'Model losses SLM QV: {slm_loss}, {qv_loss}\n')
+            f.close()
 
 '''
 e:

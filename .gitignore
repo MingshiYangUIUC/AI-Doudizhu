@@ -24,3 +24,5 @@ D_train.lnk
 .plan.txt
 *.lprof
 _test_script.py
+logs
+*tmp.py
