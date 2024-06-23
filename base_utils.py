@@ -241,7 +241,7 @@ def all_actions(mystate,forcemove=0): # now mystate is the same shape as Nelems
     # 11 triple seq
     triseq = []
     #i = 0
-    for i in range(0,10):
+    for i in range(0,11):
     #while i < 11:
         l = 2
         if Nelems[i:i+l].min()>=3:
