@@ -35,8 +35,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
     unavail = [torch.zeros(15) for _ in range(ngame)]
     history = [torch.zeros((Nhistory,15)) for _ in range(ngame)]
-    lastmove = [['',(0,0)] for _ in range(ngame)]
-    newlast = [[] for _ in range(ngame)]
+    lastmove = [('',(0,0)) for _ in range(ngame)]
+    newlast = [() for _ in range(ngame)]
 
     Turn = torch.zeros(ngame).to(torch.int32)
     Npass = [0 for _ in range(ngame)] # number of pass applying to rules
@@ -100,7 +100,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             #print(Forcemove[_])
             
 
-            acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
+            acts = avail_actions_cpp(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
 
             # add states and visible to big state
 
@@ -205,7 +205,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 if Npass[_] < 1:
                     Npass[_] += 1
                 else:
-                    newlast[_] = ['',(0,0)]
+                    newlast[_] = ('',(0,0))
                     Npass[_] = 0
                     Forcemove[_] = True
             else:
@@ -282,8 +282,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 Init_states[_] = init_game_3card_bombmode() if random.choices([True, False], weights=[bombchance, 1-bombchance])[0] else init_game_3card()
                 Visible_states[_] = Init_states[_][-1]
                 unavail[_] = torch.zeros(15)
-                lastmove[_] = ['',(0,0)]
-                newlast[_] = []
+                lastmove[_] = ('',(0,0))
+                newlast[_] = ()
                 Npass[_] = 0
                 Cpass[_] = 0
                 Forcemove[_] = True
@@ -307,6 +307,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     #return Full_output, SL_X, SL_Y
 
 def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100, rseed=0):
+    # TG, TC = 0, time.time()
     # similar to above func but does not record training data
     # use two sets of models, first set plays as landlord
     random.seed(rseed)
@@ -328,8 +329,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
 
     unavail = [torch.zeros(15) for _ in range(ngame)]
     history = [torch.zeros((Nhistory,15)) for _ in range(ngame)]
-    lastmove = [['',(0,0)] for _ in range(ngame)]
-    newlast = [[] for _ in range(ngame)]
+    lastmove = [('',(0,0)) for _ in range(ngame)]
+    newlast = [() for _ in range(ngame)]
 
     Turn = torch.zeros(ngame).to(torch.int32)
     Npass = [0 for _ in range(ngame)] # number of pass applying to rules
@@ -367,7 +368,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             CC[2][:min(card_count[2],15)] = 1
 
             # get actions
-            acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
+            acts = avail_actions_cpp(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
 
             # add states and visible to big state
             Bigstate = torch.cat([playerstate.unsqueeze(0),
@@ -397,10 +398,12 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
         model_inputs = torch.concat(model_inputs)
 
         # predict state (SL)
+        #tg0 = time.time()
         model_inter = modelS(
             model_inputs.to(dtypem).to(selfplay_device)
             ).to('cpu').to(torch.float32)
-
+        #tg1 = time.time()
+        #TG += tg1-tg0
         role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
         model_inter = torch.concat([model_inputs[:,0,0], # self
@@ -412,9 +415,10 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
         for i, mi in enumerate(model_inter):
             input_i = torch.stack([torch.cat((mi,str2state_1D(a[0]))) for a in acts_list[i]])
             model_input2.append(input_i)
-
+        #tg2 = time.time()
         model_output = modelQ(torch.cat(model_input2).to(dtypem).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
-
+        #tg3 = time.time()
+        #TG += tg3-tg2
         torch.cuda.empty_cache()
 
         # conduct actions for all instances
@@ -464,7 +468,7 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
                 if Npass[_] < 1:
                     Npass[_] += 1
                 else:
-                    newlast[_] = ['',(0,0)]
+                    newlast[_] = ('',(0,0))
                     Npass[_] = 0
                     Forcemove[_] = True
             else:
@@ -505,8 +509,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
                 Visible_states[_] = Init_states[_][-1]
                 #unavail[_] = ''
                 unavail[_] = torch.zeros(15)
-                lastmove[_] = ['',(0,0)]
-                newlast[_] = []
+                lastmove[_] = ('',(0,0))
+                newlast[_] = ()
                 Npass[_] = 0
                 Cpass[_] = 0
                 Forcemove[_] = True
@@ -514,7 +518,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
                 print(str(processed).zfill(5),'/', str(ntask).zfill(5), '   ',end='\r')
         #print(Active)
         #print(processed, ntask, Turn)
-
+    #TC = time.time()-TC
+    #print(TG,TC,TG/TC)
     return np.array(result)
 
 if __name__ == '__main__':

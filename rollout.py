@@ -9,8 +9,8 @@ def resample_state(Turn, Initstates, unavail, model_inter):
     cprob[1] = cprob[1] / np.sum(cprob[1])
     
     # total count is exact values
-    total_count = Initstates[Turn].sum(axis=-2,keepdims=True).detach().numpy().flatten()
-    total_count += str2state(unavail).sum(axis=-2,keepdims=True).numpy().flatten()
+    total_count = Initstates[Turn].detach().numpy().flatten()
+    total_count += unavail.numpy().flatten()
 
     total_count[:13] = 4 - total_count[:13]
     total_count[13:] = 1 - total_count[13:]
@@ -56,7 +56,7 @@ def resample_state(Turn, Initstates, unavail, model_inter):
 
     return sample1, sample2
 
-#@profile
+'''#@profile
 def rollout_2_2_2(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastmove, Forcemove, history, temperature, Npass, Cpass, depth=3):
 
     rTurn = Turn
@@ -94,7 +94,7 @@ def rollout_2_2_2(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
             hinput = Bigstate.unsqueeze(0)
             model_inter = SLM(hinput.to('cuda')).to('cpu')
             role = torch.zeros((model_inter.shape[0],15)) + rTurn%3
-            acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
+            acts = avail_actions_cpp(lastmove[0],lastmove[1],player,Forcemove)
             model_inter = torch.concat([hinput[:,0].sum(dim=-2),
                                         hinput[:,7].sum(dim=-2),
                                         model_inter,
@@ -210,7 +210,7 @@ def get_action_adv(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove, hist
     
     # get all actions
 
-    acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
+    acts = avail_actions_cpp(lastmove[0],lastmove[1],player,Forcemove)
 
     # generate inputs 2
     model_inter2 = torch.concat([hinput[:,0].sum(dim=-2),
@@ -274,9 +274,9 @@ def get_action_adv(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove, hist
     #print(n_Q_values.numpy().round(2), new_Q.numpy().round(2))
     #print(Turn, n_actions[0],best_action)
     return best_action, Q
-
+'''
 #@profile
-def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastmove, Forcemove, ihistory, temperature, Npass, Cpass, depth=3, selfplay_device='cuda'):
+def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm, Forcemove, ihistory, temperature, Npass, Cpass, depth=3, selfplay_device='cuda'):
     
     # do all sample states in a batch
     # sample_states are different (passed here)
@@ -291,8 +291,8 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
 
     unavail = [unavail for _ in range(ngame)]
     history = [ihistory.clone() for _ in range(ngame)]
-    lastmove = [lastmove.copy() for _ in range(ngame)]
-    newlast = [lastmove.copy() for _ in range(ngame)]
+    lastmove = [lastm for _ in range(ngame)]
+    newlast = [lastm for _ in range(ngame)]
 
     Npass = [Npass for _ in range(ngame)] # number of pass applying to rules
     Cpass = [Cpass for _ in range(ngame)] # continuous pass
@@ -333,17 +333,25 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
                 CC[2][:min(card_count[2],15)] = 1
 
                 # get actions
-                acts = avail_actions(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
+                acts = avail_actions_cpp(lastmove[_][0],lastmove[_][1],playerstate,Forcemove[_])
+                #print(acts)
                 #print(acts,lastmove[_][0])
 
                 # add states and visible to big state
-                Bigstate = torch.cat([playerstate.sum(axis=-2,keepdims=True).unsqueeze(0),
+                '''Bigstate = torch.cat([playerstate.sum(axis=-2,keepdims=True).unsqueeze(0),
                                     #str2state(unavail[_]).sum(axis=-2,keepdims=True).unsqueeze(0),
                                     str2state_compressed(unavail[_]).unsqueeze(0),
                                     CC.unsqueeze(1),
                                     visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
                                     torch.zeros((1,15)).unsqueeze(0) + Tidx, # role feature
-                                    history[_]])
+                                    history[_]])'''
+                Bigstate = torch.cat([playerstate.unsqueeze(0),
+                            unavail[_].unsqueeze(0),
+                            CC,
+                            visible.unsqueeze(0), # new feature
+                            torch.full((1, 15), Turn%3),
+                            history[_]])
+                Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
 
                 # generate inputs
                 model_inputs.append(Bigstate.unsqueeze(0))
@@ -359,8 +367,8 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
 
             role = torch.zeros((model_inter.shape[0],15)) + Tidx
 
-            model_inter = torch.concat([model_inputs[:,0].sum(dim=-2), # self
-                                        model_inputs[:,7].sum(dim=-2), # history
+            model_inter = torch.concat([model_inputs[:,0,0], # self
+                                        model_inputs[:,7,0], # history
                                         model_inter, # upper and lower states
                                         role],dim=-1)
             model_input2 = []
@@ -425,20 +433,20 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
                 Forcemove[_] = False
 
             # conduct a move
-            myst = state2str(playerstate.sum(dim=0).numpy())
-            cA = Counter(myst)
-            cB = Counter(action[0])
-            newst = ''.join(list((cA - cB).elements()))
-            newunavail = unavail[_] + action[0]
+            newhiststate = str2state_1D(action[0])
+            newst = playerstate - newhiststate
+            newunavail = unavail[_] + newhiststate
             newhist = torch.roll(history[_],1,dims=0)
-            newhist[0] = str2state_compressed(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
+            #newhiststate = str2state_1D(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
+            
+            newhist[0] = newhiststate# first row is newest, others are moved downward
 
             if action[1][0] == 0:
                 Cpass[_] += 1
                 if Npass[_] < 1:
                     Npass[_] += 1
                 else:
-                    newlast[_] = ['',(0,0)]
+                    newlast[_] = ('',(0,0))
                     Npass[_] = 0
                     Forcemove[_] = True
             else:
@@ -447,7 +455,8 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
                 Cpass[_] = 0
 
             # record and update
-            nextstate = str2state(newst)
+            nextstate = newst
+
             #print(newst)
 
             sample_states[_][Tidx] = nextstate
@@ -458,7 +467,7 @@ def rollout_batch(Turn, SLM, QV, sample_states, overwrite_action, unavail, lastm
             if d % 3 == 0:
                 results[_] = Q
 
-            if len(newst) == 0:
+            if newst.max() == 0:
                 Active[_] = False
                 results[_] = 0
                 if Turn%3 == 0 and rTurn%3 == 0:
@@ -509,7 +518,7 @@ def get_action_adv_batch(Turn, SLM, QV, Initstates, unavail, lastmove, Forcemove
     
     # get all actions
 
-    acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
+    acts = avail_actions_cpp(lastmove[0],lastmove[1],player,Forcemove)
     #print(state2str(player.sum(axis=0)))
     
 
@@ -624,17 +633,17 @@ def process_loop(_, args):
     for i in range(N):  # resample given action
         for r in range(min(nRoll, int(nAct / N * 10))):
             action = n_actions[i]
-            ractions.append(action.copy())
+            ractions.append(action)
 
             # construct initsates
             sample1, sample2 = resample_state(Turn % 3, Initstates, unavail, model_inter)
             sample_states = [None, None, None, Initstates[-1].clone()]
             sample_states[Turn % 3] = Initstates[Turn % 3].clone()
-            sample_states[(Turn - 1) % 3] = str2state(''.join([r2c_base[i] * sample1[i] for i in range(15)]))
-            sample_states[(Turn + 1) % 3] = str2state(''.join([r2c_base[i] * sample2[i] for i in range(15)]))
+            sample_states[(Turn - 1) % 3] = str2state_1D(''.join([r2c_base[i] * sample1[i] for i in range(15)]))
+            sample_states[(Turn + 1) % 3] = str2state_1D(''.join([r2c_base[i] * sample2[i] for i in range(15)]))
             rstates.append(sample_states)
 
-    Qroll = rollout_batch(Turn, SLM, QV, rstates, ractions, unavail, lastmove.copy(), Forcemove, history.clone(),
+    Qroll = rollout_batch(Turn, SLM, QV, rstates, ractions, unavail, lastmove, Forcemove, history.clone(),
                           temperature, Npass, Cpass, depth=ndepth)
     Qroll = Qroll.reshape(N, r + 1)
 
@@ -662,12 +671,13 @@ def get_action_adv_batch_mp(Turn, SLM, QV, Initstates, unavail, lastmove, Forcem
     #print(CC)
 
     # get action
-    Bigstate = torch.cat([player.sum(axis=-2,keepdims=True).unsqueeze(0),
-                            str2state(unavail).sum(axis=-2,keepdims=True).unsqueeze(0),
-                            CC.unsqueeze(1),
-                            visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
-                            torch.zeros((1,15)).unsqueeze(0) + Turn%3, # role feature
-                            history.sum(axis=-2,keepdims=True)])
+    Bigstate = torch.cat([player.unsqueeze(0),
+                            unavail.unsqueeze(0),
+                            CC,
+                            visible.unsqueeze(0), # new feature
+                            torch.full((1, 15), Turn%3),
+                            history])
+    Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
 
     # generate inputs
     hinput = Bigstate.unsqueeze(0)
@@ -675,7 +685,7 @@ def get_action_adv_batch_mp(Turn, SLM, QV, Initstates, unavail, lastmove, Forcem
     role = torch.zeros((model_inter.shape[0],15)) + Turn%3
     
     # get all actions
-    acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
+    acts = avail_actions_cpp(lastmove[0],lastmove[1],player,Forcemove)
 
     # generate inputs 2
     model_inter2 = torch.concat([hinput[:,0].sum(dim=-2),

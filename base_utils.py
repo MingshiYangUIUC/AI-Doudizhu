@@ -9,6 +9,7 @@ import sys
 import numpy as np
 
 from collections import defaultdict
+import search_action_space
 
 r2c_base = {0:'3',
        1:'4',
@@ -360,7 +361,7 @@ def avail_actions(opact,opinfo,mystate,forcemove=0): # now mystate is the same s
             out = []
             for s1 in sin1:
                 for s2 in sin1:
-                    if c2r_base[s1] < c2r_base[s2] or Nelems[c2r_base[s1]] >= 2:
+                    if c2r_base[s1] < c2r_base[s2] or (c2r_base[s1] == c2r_base[s2] and Nelems[c2r_base[s1]] >= 2):
                         out += [[t[0]+s1+s2,t[1]] for t in quad if t[0][0] != s1 if t[0][0] != s2]
             out.extend(all_bombs_new(Nelems))
             #return out
@@ -372,7 +373,7 @@ def avail_actions(opact,opinfo,mystate,forcemove=0): # now mystate is the same s
             out = []
             for d1 in dbl1:
                 for d2 in dbl1:
-                    if c2r_base[d1] < c2r_base[d2] or Nelems[c2r_base[d1]] >= 4:
+                    if c2r_base[d1] < c2r_base[d2] or (c2r_base[d1] == c2r_base[d2] and Nelems[c2r_base[d1]] >= 4):
                         out += [[t[0]+d1*2+d2*2,t[1]] for t in quad if t[0][0] != d1 if t[0][0] != d2]
             out.extend(all_bombs_new(Nelems))
             #return out
@@ -445,6 +446,107 @@ def avail_actions(opact,opinfo,mystate,forcemove=0): # now mystate is the same s
         # ALL ACTIONS!
         # Assign type&rank to these actions
         return all_actions(mystate,forcemove)
+        #return all_actions_cpp(mystate,forcemove)
+
+def all_planes(Nelems, triseq):
+    # combinations function is quite fast compared to cpp and easier to use, so plane with wings are searched with python.
+
+    triseq = [(''.join([T*3 for T in r2c_base_arr[i_l[0]:i_l[0]+i_l[1]]]),(11,i_l[0])) for i_l in triseq]
+    out = []
+    
+    for ts in triseq:
+        l = int(len(ts[0])/3)
+
+        if l < 6: # 12 plane + wings of size 1
+            sub = Nelems.copy()
+            sub[ts[1][1]:ts[1][1]+l] -= 3
+            sub = state2list_1D(sub)
+            combinations_string = list(set(combinations(sub, l)))
+            for comb in combinations_string:
+                out.append((ts[0]+''.join(comb),(12,ts[1][1])))
+        
+        if l < 5: # 13 plane + wings of size 2
+            sub = Nelems.copy()
+            sub[ts[1][1]:ts[1][1]+l] -= 3
+            sub = state2list_1D(sub)
+            counterC = Counter(sub)
+            comb = []
+            for k in list(counterC.keys()):
+                if counterC[k] >= 2:
+                    comb.append(k*2)
+                    if counterC[k] == 4:
+                        comb.append(k*2)
+            combinations_string = list(set(combinations(comb, l)))
+            for comb in combinations_string:
+                out.append((ts[0]+''.join(comb),(13,ts[1][1])))
+
+    return out
+
+def avail_planes(opinfo, opact, Nelems):
+    # combinations function is quite fast compared to cpp and easier to use, so plane with wings are searched with python.
+    
+    out = []
+    if opinfo[0] == 12: # xxxyyy triple sequence (plane) + wings of size 1
+        # return all larger d sequences of same length
+        stls = state2list_1D(Nelems)
+        l = int(len(opact)/4)
+        triseq = [(''.join(r2c_base[j]*3 for j in range(i,i+l)),(12,i)) for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 3]
+        out = []
+        for ts in triseq:
+            tsls = [t for t in ts[0]]
+            counterA = Counter(tsls)
+            counterB = Counter(stls)
+            others = list((counterB - counterA).elements())
+            combinations_string = list(set(combinations(others, l)))
+            for comb in combinations_string:
+                out.append((ts[0]+''.join(comb),ts[1]))
+        out.extend(all_bombs_new(Nelems))
+        #return out
+    
+    elif opinfo[0] == 13: # xxxyyy triple sequence (plane) + wings of size 2!
+        # return all larger d sequences of same length
+        stls = state2list_1D(Nelems)
+        l = int(len(opact)/5)
+        triseq = [(''.join(r2c_base[j]*3 for j in range(i,i+l)),(13,i)) for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 3]
+        out = []
+        for ts in triseq:
+            tsls = [t for t in ts[0]]
+            counterA = Counter(tsls)
+            counterB = Counter(stls)
+            others = list((counterB - counterA).elements())
+            counterC = Counter(others)
+            comb = []
+            for k in list(counterC.keys()):
+                if counterC[k] >= 2:
+                    comb.append(k*2)
+                    if counterC[k] == 4:
+                        comb.append(k*2)
+            combinations_string = list(set(combinations(comb, l)))
+            for comb in combinations_string:
+                out.append((ts[0]+''.join(comb),ts[1]))
+        out.extend(all_bombs_new(Nelems))
+    return out
+
+#@profile
+def all_actions_cpp(mystate_array,forcemove=0):
+    #input_array = mystate.numpy()
+    cacts, triseq = search_action_space.get_all_actions(mystate_array)
+    if not forcemove:
+        cacts.insert(0,('',(0,0)))
+    cacts.extend(all_planes(mystate_array,triseq))
+    return cacts
+
+#@profile
+def avail_actions_cpp(opact,opinfo,mystate,forcemove=0):
+    input_array = mystate.numpy()
+    if opinfo[0] != 0:
+        cacts = search_action_space.get_avail_actions(opact, opinfo, input_array)
+        if not forcemove:
+            cacts.insert(0,('',(0,0)))
+        cacts.extend(avail_planes(opinfo, opact, input_array))
+    else:
+        cacts = all_actions_cpp(input_array,forcemove)
+    return cacts
 
 
 def cards2action(cards): # from str representation to action type and rank

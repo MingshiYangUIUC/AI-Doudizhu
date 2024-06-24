@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from base_utils import avail_actions, str2state, r2c_base_arr, Label
+from base_utils import avail_actions_cpp, str2state, r2c_base_arr, Label
 
 # network reads in self state, played cards, historical N move, and self action
 # output one value (win rate)
@@ -285,12 +285,13 @@ def get_action_serial_V2_2_2(Turn, SLM, QV, Initstates,unavail,lastmove, Forcemo
     #print(CC)
 
     # get action
-    Bigstate = torch.cat([player.sum(axis=-2,keepdims=True).unsqueeze(0),
-                            str2state(unavail).sum(axis=-2,keepdims=True).unsqueeze(0),
-                            CC.unsqueeze(1),
-                            visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
-                            torch.zeros((1,15)).unsqueeze(0) + Turn%3, # role feature
-                            history.sum(axis=-2,keepdims=True)])
+    Bigstate = torch.cat([player.unsqueeze(0),
+                            unavail.unsqueeze(0),
+                            CC,
+                            visible.unsqueeze(0), # new feature
+                            torch.full((1, 15), Turn%3),
+                            history])
+    Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
     #print(Bigstate)
     # generate inputs
     hinput = Bigstate.unsqueeze(0)
@@ -310,7 +311,7 @@ def get_action_serial_V2_2_2(Turn, SLM, QV, Initstates,unavail,lastmove, Forcemo
 
     # get all actions
     #print(player)
-    acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
+    acts = avail_actions_cpp(lastmove[0],lastmove[1],player,Forcemove)
     #print(acts)
     # generate inputs 2
     model_inter = torch.concat([hinput[:,0].sum(dim=-2),
