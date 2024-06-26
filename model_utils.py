@@ -351,13 +351,13 @@ def evaluate_action_serial_V2_2_2(Turn, SLM, QV, Initstates, unavail, lastmove, 
     #print(CC)
 
     # get action
-    Bigstate = torch.cat([player.sum(axis=-2,keepdims=True).unsqueeze(0),
-                            str2state(unavail).sum(axis=-2,keepdims=True).unsqueeze(0),
-                            CC.unsqueeze(1),
-                            visible.sum(axis=-2,keepdims=True).unsqueeze(0), # new feature
-                            torch.zeros((1,15)).unsqueeze(0) + Turn%3, # role feature
-                            history.sum(axis=-2,keepdims=True)])
-
+    Bigstate = torch.cat([player.unsqueeze(0),
+                            unavail.unsqueeze(0),
+                            CC,
+                            visible.unsqueeze(0), # new feature
+                            torch.full((1, 15), Turn%3),
+                            history])
+    Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
     # generate inputs
     hinput = Bigstate.unsqueeze(0)
     model_inter = SLM(hinput)

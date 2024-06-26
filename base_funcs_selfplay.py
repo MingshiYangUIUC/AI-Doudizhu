@@ -144,13 +144,10 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                                     model_inputs[:,7,0], # history
                                     model_inter, # upper and lower states
                                     role],dim=-1)
-        model_input2 = []
-
-        for i, mi in enumerate(model_inter):
-            actions_tensor = torch.stack([str2state_compressed_1D(a[0]) for a in acts_list[i]])
-            mi_expanded = mi.unsqueeze(0).expand(actions_tensor.shape[0],-1)  # Expand mi to match the batch size of actions_tensor
-            input_i = torch.cat((mi_expanded, actions_tensor), dim=1)
-            model_input2.append(input_i)
+        
+        actions_tensors = [torch.stack([str2state_compressed_1D(a[0]) for a in acts]) for acts in acts_list]
+        expanded_model_inter = [mi.unsqueeze(0).expand(actions_tensor.shape[0], -1) for mi, actions_tensor in zip(model_inter, actions_tensors)]
+        model_input2 = [torch.cat((expanded_model, actions_tensor), dim=1) for expanded_model, actions_tensor in zip(expanded_model_inter, actions_tensors)]
 
         #print(model_inter.shape)
         #quit()
@@ -171,14 +168,14 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             acts = acts_list[iout]
 
             if temperature == 0:
-                #q = torch.max(output)
-                best_act = acts[torch.argmax(output)]
+                qa = torch.argmax(output)
+                best_act = acts[qa]
             else:
                 # get action using probabilistic approach and temperature
                 probabilities = torch.softmax(output / temperature, dim=0)
                 distribution = torch.distributions.Categorical(probabilities)
-                q = distribution.sample()
-                best_act = acts[q]
+                qa = distribution.sample()
+                best_act = acts[qa]
             
             #print(torch.argmax(output))
             action = best_act
@@ -187,16 +184,10 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 Forcemove[_] = False
 
             # conduct a move
-            #myst = state2str(playerstate.numpy())
-            #cA = Counter(myst)
-            #cB = Counter(action[0])
-            #newst = ''.join(list((cA - cB).elements()))
-            newhiststate = str2state_1D(action[0])
+            newhiststate = actions_tensors[iout][qa]
             newst = playerstate - newhiststate
             newunavail = unavail[_] + newhiststate
             newhist = torch.roll(history[_],1,dims=0)
-            #newhiststate = str2state_1D(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
-            
             newhist[0] = newhiststate# first row is newest, others are moved downward
 
 
