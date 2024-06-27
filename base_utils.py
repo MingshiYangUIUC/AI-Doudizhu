@@ -124,6 +124,13 @@ def str2state_1D(st): # same as str2state_compressed_1D
         state[c2r_base[char]] = count
     return torch.from_numpy(state)
 
+def str2state_1D_npy(st): # does not convert to torch tensor
+    ct = Counter(st)
+    state = np.zeros(15,dtype=np.float32)
+    for char, count in ct.items():
+        state[c2r_base[char]] = count
+    return state
+
 # create action based on last state
 # create type along with action!
 def all_bombs_new(Nelems):
@@ -548,6 +555,134 @@ def avail_actions_cpp(opact,opinfo,mystate,forcemove=0):
         cacts = all_actions_cpp(input_array,forcemove)
     return cacts
 
+#@profile
+def all_planes_state(Nelems, triseq): # now mystate is the same shape as Nelems
+    triseq = [(''.join([T*3 for T in r2c_base_arr[i_l[0]:i_l[0]+i_l[1]]]),(11,i_l[0])) for i_l in triseq]
+    out = []
+    
+    for ts in triseq:
+        l = int(len(ts[0])/3)
+        ts_state = str2state_1D_npy(ts[0])
+
+        if l < 6: # 12 plane + wings of size 1
+            sub = Nelems.copy()
+            sub[ts[1][1]:ts[1][1]+l] -= 3
+            sub = state2list_1D(sub)
+
+            combinations_string = list(set(combinations(sub, l)))
+            combinations_state = np.zeros((len(combinations_string),15),dtype=np.float32) + ts_state[None,:]
+            for i in range(l):
+                idxi = [c2r_base[_[i]] for _ in combinations_string]
+                combinations_state[np.arange(len(combinations_state)),idxi] += 1
+
+            out.extend([(cs,(12,ts[1][1])) for cs in combinations_state])
+        
+        if l < 5: # 13 plane + wings of size 2
+            sub = Nelems.copy()
+            sub[ts[1][1]:ts[1][1]+l] -= 3
+            sub = state2list_1D(sub)
+            counterC = Counter(sub)
+            comb = []
+            for k in list(counterC.keys()):
+                if counterC[k] >= 2:
+                    comb.append(k)
+                    if counterC[k] == 4:
+                        comb.append(k)
+            combinations_string = list(set(combinations(comb, l)))
+            combinations_state = np.zeros((len(combinations_string),15),dtype=np.float32) + ts_state[None,:]
+            for i in range(l):
+                idxi = [c2r_base[_[i]] for _ in combinations_string]
+                combinations_state[np.arange(len(combinations_state)),idxi] += 2
+
+            out.extend([(cs,(13,ts[1][1])) for cs in combinations_state])
+
+
+    return out#, out2
+
+#@profile
+def avail_planes_state(opinfo, lopact, Nelems):
+    out = []
+    if opinfo[0] == 12: # xxxyyy triple sequence (plane) + wings of size 1
+        # return all larger d sequences of same length
+        stls = state2list_1D(Nelems)
+        l = int(lopact/4)
+        triseq = [(''.join(r2c_base[j]*3 for j in range(i,i+l)),(12,i)) for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 3]
+        out = []
+        for ts in triseq:
+            ts_state = str2state_1D_npy(ts[0])
+
+            tsls = [t for t in ts[0]]
+            counterA = Counter(tsls)
+            counterB = Counter(stls)
+            others = list((counterB - counterA).elements())
+            combinations_string = list(set(combinations(others, l)))
+
+            combinations_state = np.zeros((len(combinations_string),15),dtype=np.float32) + ts_state[None,:]
+            for i in range(l):
+                idxi = [c2r_base[_[i]] for _ in combinations_string]
+                combinations_state[np.arange(len(combinations_state)),idxi] += 1
+
+            out.extend([(cs,ts[1]) for cs in combinations_state])
+
+            #for comb in combinations_string:
+            #    out_ = (str2state_1D_npy(ts[0]+''.join(comb)),ts[1])
+        b = all_bombs_new(Nelems)
+        out.extend([(str2state_1D_npy(_[0]),_[1]) for _ in b])
+        #return out
+    
+    elif opinfo[0] == 13: # xxxyyy triple sequence (plane) + wings of size 2!
+        # return all larger d sequences of same length
+        stls = state2list_1D(Nelems)
+        l = int(lopact/5)
+        triseq = [(''.join(r2c_base[j]*3 for j in range(i,i+l)),(13,i)) for i in range(opinfo[1]+1,13-l) if Nelems[i:i+l].min() >= 3]
+        out = []
+        for ts in triseq:
+            ts_state = str2state_1D_npy(ts[0])
+
+            tsls = [t for t in ts[0]]
+            counterA = Counter(tsls)
+            counterB = Counter(stls)
+            others = list((counterB - counterA).elements())
+            counterC = Counter(others)
+            comb = []
+            for k in list(counterC.keys()):
+                if counterC[k] >= 2:
+                    comb.append(k)
+                    if counterC[k] == 4:
+                        comb.append(k)
+            combinations_string = list(set(combinations(comb, l)))
+
+            combinations_state = np.zeros((len(combinations_string),15),dtype=np.float32) + ts_state[None,:]
+            for i in range(l):
+                idxi = [c2r_base[_[i]] for _ in combinations_string]
+                combinations_state[np.arange(len(combinations_state)),idxi] += 2
+
+            out.extend([(cs,ts[1]) for cs in combinations_state])
+
+            #for comb in combinations_string:
+            #    out_ = (str2state_1D_npy(ts[0]+''.join(comb)),ts[1])
+        b = all_bombs_new(Nelems)
+        out.extend([(str2state_1D_npy(_[0]),_[1]) for _ in b])
+    return out
+
+def all_actions_cpp_state(mystate,forcemove=0):
+    input_array = mystate.numpy()
+    cacts, triseq = search_action_space.get_all_actions_array(input_array)
+    if not forcemove:
+        cacts.insert(0,(np.zeros(15,dtype=np.float32),(0,0)))
+    cacts.extend(all_planes_state(input_array,triseq))
+    return cacts
+
+def avail_actions_cpp_state(opact,opinfo,mystate,forcemove=0):
+    input_array = mystate.numpy()
+    if opinfo[0] != 0:
+        cacts = search_action_space.get_avail_actions_array(int(opact.sum()), opinfo, input_array)
+        if not forcemove:
+            cacts.insert(0,(np.zeros(15,dtype=np.float32),(0,0)))
+        cacts.extend(avail_planes_state(opinfo, int(opact.sum()), input_array))
+    else:
+        cacts = all_actions_cpp_state(mystate,forcemove)
+    return cacts
 
 def cards2action(cards): # from str representation to action type and rank
 
