@@ -19,6 +19,7 @@ import sys
 import gc
 import pickle
 import argparse
+import configparser
 from datetime import datetime, timezone
 
 def set_seed(seed):
@@ -92,9 +93,11 @@ def worker(task_params):
     models, rand_param, selfplay_device, selfplay_batch_size, n_history, chunksize, ip, npr, bchance = task_params
 
     results = []
-    torch.cuda.empty_cache()
+    if selfplay_device == 'cuda':
+        torch.cuda.empty_cache()
     results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, selfplay_batch_size, chunksize.item(), bchance)
-    torch.cuda.empty_cache()
+    if selfplay_device == 'cuda':
+        torch.cuda.empty_cache()
     print(f'---------- {str(ip).zfill(2)} / {npr} END----------',end='\r')
     return results
 
@@ -129,28 +132,46 @@ def parse_args():
     parser.add_argument('--version', type=str, default='V2_2.2', help="Version of the model")
     parser.add_argument('--n_history', type=int, default=15, help="Number of historic moves in model input")
     parser.add_argument('--n_feature', type=int, default=7, help="Additional feature size of the model")
+    parser.add_argument('--m_par0', type=int, default=512, help="Model parameter 0: SLM LSTM")
+    parser.add_argument('--m_par1', type=int, default=512, help="Model parameter 1: SLM MLP")
+    parser.add_argument('--m_par2', type=int, default=512, help="Model parameter 2: QV MLP")
+    parser.add_argument('--m_seed', type=int, default=20010101, help="Model init seed")
 
     # environment arguments
     parser.add_argument('--selfplay_device', type=str, default='cuda', help="Device for selfplay games")
     parser.add_argument('--n_save', type=int, default=100000, help="Number of games to be played before each round of saving")
     parser.add_argument('--n_processes', type=int, default=14, help="Number of CPU processes used in selfplay")
     parser.add_argument('--selfplay_batch_size', type=int, default=32, help="Batch number of concurrent games send to GPU by each process")
+    parser.add_argument('--n_worker', type=int, default=0, help="num_workers in data loader")
     
     # hyperparameters
     parser.add_argument('--batch_size', type=int, default=256, help="Batch size for training")
     parser.add_argument('--n_episodes', type=int, default=25000, help="Number of games to be played before each round of training")
     parser.add_argument('--n_epoch', type=int, default=1, help="Number of epochs for training")
-    parser.add_argument('--lr1', type=float, default=0.000005/64*256, help="Learning rate for model part 1")
-    parser.add_argument('--lr2', type=float, default=0.000003/64*256, help="Learning rate for model part 2")
+    parser.add_argument('--lr1', type=float, default=0.000005/64*256, help="Scaled Learning rate for model part 1")
+    parser.add_argument('--lr2', type=float, default=0.000003/64*256, help="Scaled Learning rate for model part 2")
     parser.add_argument('--l2_reg_strength', type=float, default=1e-6, help="L2 regularization strength")
-    parser.add_argument('--rand_param', type=float, default=0.01, help="Random parameter for moves")
+    parser.add_argument('--rand_param', type=float, default=0.01, help="Random parameter for action selection")
     parser.add_argument('--bomb_chance', type=float, default=0.01, help="Chance of getting a deck full of bombs during selfplay")
-    parser.add_argument('--m_par0', type=int, default=512, help="Model parameter 0")
-    parser.add_argument('--m_par1', type=int, default=512, help="Model parameter 1")
-    parser.add_argument('--m_par2', type=int, default=512, help="Model parameter 2")
-    parser.add_argument('--m_seed', type=int, default=20010101, help="Model init seed")
     
-    return parser.parse_args()
+    # Add an argument for config file
+    parser.add_argument('--config', type=str, help="Path to configuration file (relative)")
+
+    args = parser.parse_args()
+
+    # If config file is provided, parse it and update arguments
+    if args.config:
+        config = configparser.ConfigParser()
+        wd = os.path.dirname(__file__)
+        config.read(os.path.join(wd,args.config))
+
+        # Update arguments from config file
+        if 'USER' in config:
+            for key in vars(args):
+                if key in config['USER']:
+                    setattr(args, key, type(getattr(args, key))(config['USER'][key]))
+
+    return args
 
 if __name__ == '__main__':
     wd = os.path.dirname(__file__)
@@ -205,24 +226,14 @@ if __name__ == '__main__':
     n_process = args.n_processes
     batch_size = args.batch_size
     nepoch = args.n_epoch
+    n_worker = args.n_worker
     LR1 = args.lr1 / 64 * batch_size
     LR2 = args.lr2 / 64 * batch_size
     l2_reg_strength = args.l2_reg_strength
     rand_param = args.rand_param
     bomb_chance = args.bomb_chance
 
-
-    # transfer weights from another version (need same model structure)
-    #transfer = False
-    #transfer_name = ''
-
-    #n_past_ds = 10 # augment using since last NP datasets.
-    #n_choice_ds = 1 # choose NC from last NP datasets
-
-    n_worker = 0 # default dataloader
-
-    #SLM = Network_Pcard_V2_1(n_history+n_feature, n_feature, y=1, x=15, lstmsize=512, hiddensize=1024)
-    #QV = Network_Qv_Universal_V1_1(6,15,1024)
+    # Initialize model
     random_seed = random.randint(0,2**32-1)
     if Total_episodes == 0:
         set_seed(args.m_seed)
@@ -233,8 +244,7 @@ if __name__ == '__main__':
     
     SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
     QV = Network_Qv_Universal_V1_1_BN(6,15,args.m_par2)
-    #SLM = Network_Pcard_V2_1_Trans(n_history+n_feature, n_feature, y=1, trans_heads=4, trans_layers=6, hiddensize=512)
-    #QV = Network_Qv_Universal_V1_1(6,15,512)
+
     # reset seed to random after initialization
     set_seed(random_seed)
 
@@ -283,23 +293,16 @@ if __name__ == '__main__':
             SL_Y.append(sl_y)
 
             for i in range(3):
-                #print(BufferStatesActs[i].shape)
                 Xbuffer[i].append(SAs[i])
                 Ybuffer[i].append(Rewards[i])
-                #print(SAs[i].shape, Rewards[i].shape)
-                #print(BufferRewards[i][0], torch.zeros(len(BufferStatesActs[i][0]))+BufferRewards[i][0][0])
-                #print(len(BufferStatesActs[i]),torch.zeros(len(BufferStatesActs[i]))+BufferRewards[i])
             
             STAT += stat
     
         del results, SAs, Rewards, sl_x, sl_y
-        #del results, tasks, chunk
-        
 
         SL_X = torch.cat(SL_X)
         SL_Y = torch.cat(SL_Y)
 
-        #STAT[1:] = np.sum(STAT[1:])
         print('Game Stat:',np.round((STAT/n_episodes)*100,2))
 
         print(SL_X.shape,SL_Y.shape)

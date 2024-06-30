@@ -438,6 +438,13 @@ if __name__ == '__main__':
     
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
+
+    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
+    QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+
+    SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_H15-V2_2.3_0056000000.pt')))
+    QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_H15-V2_2.3_0056000000.pt')))
+    
     SLM.eval()
     QV.eval()
 

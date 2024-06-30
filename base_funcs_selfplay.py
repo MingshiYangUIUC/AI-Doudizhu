@@ -14,7 +14,8 @@ from base_utils import *
 
 
 #@profile
-def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100, bombchance=0.01):
+def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=6, ngame=20, ntask=100, bombchance=0.01, bs_max=30):
+    bs_max = bs_max * ngame
     #print('Init wt',Models[0].fc2.weight.data[0].mean())
     #quit()
     if selfplay_device == 'cuda':
@@ -133,7 +134,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
 
         # use all data to run model
-        torch.cuda.empty_cache()
+        if selfplay_device == 'cuda':
+            torch.cuda.empty_cache()
 
         model_inputs = torch.concat(model_inputs)
 
@@ -142,9 +144,12 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         SL_X.append(model_inputs.clone().detach())
         SL_Y.append(torch.stack(sl_y))
         # predict state (SL)
-        model_inter = model(
-            model_inputs.to(dtypem).to(selfplay_device)
-            ).to('cpu').to(torch.float32)
+        if selfplay_device == 'cuda':
+            model_inter = model(
+                model_inputs.to(dtypem).to(selfplay_device)
+                ).to('cpu').to(torch.float32)
+        else:
+            model_inter = model(model_inputs)
         #print(model_inter.shape)
         #quit()
         #print(model_inter.shape,torch.stack(sl_y).shape)
@@ -167,10 +172,23 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         expanded_model_inter = [mi.unsqueeze(0).expand(actions_tensor.shape[0], -1) for mi, actions_tensor in zip(model_inter, actions_tensors)]
         model_input2 = [torch.cat((expanded_model, actions_tensor), dim=1) for expanded_model, actions_tensor in zip(expanded_model_inter, actions_tensors)]
 
-        #print(model_inter.shape)
-        #quit()
-        model_output = Models[-1](torch.cat(model_input2).to(dtypem).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
-
+        # Handle large input (beginning of batchpool) by dividing into chunks
+        if selfplay_device == 'cuda':
+            model_input2 = torch.cat(model_input2).to(dtypem)
+            if len(model_input2) <= bs_max:
+                # Original code for small input sizes
+                model_output = Models[-1](model_input2.to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+            else:
+                # Handle large input sizes by processing in batches
+                model_output = []
+                for i in range(0, len(model_input2), bs_max):
+                    batch = model_input2[i:i+bs_max]
+                    batch_output = Models[-1](batch.to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+                    model_output.append(batch_output)
+                model_output = torch.cat(model_output)
+        else:
+            model_input2 = torch.cat(model_input2)
+            model_output = Models[-1](model_input2).flatten()
 
         # conduct actions for all instances
         for iout, _ in enumerate(Index[Active]):
@@ -395,7 +413,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
             acts_list.append(acts)
 
         # use all data to run model
-        torch.cuda.empty_cache()
+        if selfplay_device == 'cuda':
+            torch.cuda.empty_cache()
 
         if Tidx == 0: # first set of model
             modelS = Models[0][0]
@@ -428,7 +447,8 @@ def gating_batchpool(Models, temperature, selfplay_device, Nhistory=6, ngame=20,
         model_output = modelQ(torch.cat(model_input2).to(dtypem).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
         #tg3 = time.time()
         #TG += tg3-tg2
-        torch.cuda.empty_cache()
+        if selfplay_device == 'cuda':
+            torch.cuda.empty_cache()
 
         # conduct actions for all instances
         for iout, _ in enumerate(Index[Active]):
@@ -559,10 +579,10 @@ if __name__ == '__main__':
             [SLM,QV]
             )'''
     #SLM = Network_Pcard_V2_1_Trans(15+7, 7, y=1, x=15, trans_heads=4, trans_layers=6, hiddensize=512)
-    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=128, hiddensize=128)
-    QV = Network_Qv_Universal_V1_1_BN(6,15,128)
-    SLM.load_state_dict(torch.load(os.path.join(wd,'models','SLM_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
-    QV.load_state_dict(torch.load(os.path.join(wd,'models','QV_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
+    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=1024, hiddensize=1024)
+    QV = Network_Qv_Universal_V1_1_BN(6,15,1024)
+    #SLM.load_state_dict(torch.load(os.path.join(wd,'models','SLM_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
+    #QV.load_state_dict(torch.load(os.path.join(wd,'models','QV_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
     #quit()
     SLM.eval()
     QV.eval()
@@ -570,10 +590,10 @@ if __name__ == '__main__':
     #torch.save(SLM.state_dict(),os.path.join(wd,'test_models',f'SLM_Trans.pt'))
     #torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_Trans.pt'))
 
-    N_episodes = 256
-    ng = 64
+    N_episodes = 512
+    ng = 512
     
-    #seed = random.randint(0,1000000000)
+    seed = random.randint(0,1000000000)
     seed = 12333
     print(seed)
     random.seed(seed)
@@ -581,8 +601,15 @@ if __name__ == '__main__':
     #SLM = Network_Pcard_V2_1(22,7,1,15, 512,512)
     #QV = Network_Qv_Universal_V1_1(6,15,512)
     with torch.no_grad():
-        out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cpu', Nhistory=15, ngame=ng, ntask=N_episodes)
+        out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes,bombchance=0.0,
+                                           bs_max=64)
         print(out[-1])
+
+    max_memory_used = torch.cuda.max_memory_allocated('cuda')
+    print(f"Maximum memory used by the model: {max_memory_used / (1024 ** 2)} MB")
+
+    # You can also get a detailed memory summary
+    print(torch.cuda.memory_summary('cuda'))
     
     '''gatingresult = gating_batchpool(models, 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes, rseed=seed)
     print('')

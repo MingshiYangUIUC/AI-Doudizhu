@@ -28,3 +28,4 @@ logs
 *tmp.py
 *.pyd
 cpp/build
+.config.ini
