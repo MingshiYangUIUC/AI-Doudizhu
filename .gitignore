@@ -27,5 +27,6 @@ _test_script.py
 logs
 *tmp.py
 *.pyd
+*.so
 cpp/build
 .config.ini
