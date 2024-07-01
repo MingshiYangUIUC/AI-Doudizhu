@@ -1,0 +1,86 @@
+[USER]
+
+; Change this file to ".config.ini" to use.
+
+; Master Arguments
+
+; Auto train mode: continue iterating for task episode number
+auto = True
+
+; Task episode number
+train = 10000
+
+; Query status mode: return most recent model version
+query = False
+
+; Log training status
+logging = True
+
+
+; Model Arguments
+
+; Version of the model
+version = VBx5_128-128-128_0.01_0.0001-0.0001_256
+
+; Number of historic moves in model input
+n_history = 15
+
+; Additional feature size of the model
+n_feature = 7
+
+; Model parameter 0: SLM LSTM
+m_par0 = 128
+
+; Model parameter 1: SLM MLP
+m_par1 = 128
+
+; Model parameter 2: QV MLP
+m_par2 = 128
+
+; Model init seed
+m_seed = 20010101
+
+
+; Environment Arguments
+
+; Device for selfplay games
+selfplay_device = cpu
+
+; Number of games to be played before each round of saving
+n_save = 5000
+
+; Number of CPU processes used in selfplay
+n_processes = 12
+
+; Batch number of concurrent games send to GPU by each process
+selfplay_batch_size = 64
+
+; num_workers in data loader
+n_worker = 0
+
+
+; Hyperparameters
+
+; Batch size for training
+batch_size = 256
+
+; Number of games to be played before each round of training
+n_episodes = 5000
+
+; Number of epochs for training
+n_epoch = 1
+
+; Scaled (batch_size=64) Learning rate for model part 1
+lr1 = 0.0001
+
+; Scaled (batch_size=64) Learning rate for model part 2
+lr2 = 0.0001
+
+; L2 regularization strength
+l2_reg_strength = 1e-06
+
+; Random parameter for action selection
+rand_param = 0.01
+
+; Chance of getting a deck full of bombs during selfplay
+bomb_chance = 0.01

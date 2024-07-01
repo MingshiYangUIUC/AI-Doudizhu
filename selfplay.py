@@ -88,7 +88,7 @@ if __name__ == '__main__':
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
 
-    save_path = '/mnt/e/Documents/ddz/train'
+    save_path = '/home/mingshiyang/AI-Doudizhu/train'
 
     device = 'cpu'
     selfplay_device = 'cuda'

@@ -29,7 +29,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
             Init_states = init_game_3card() # [Lstate, Dstate, Ustate]
         else:
             Init_states = init_game_3card_bombmode(bstrength)
-        public_cards = state2str(Init_states[-1].numpy().sum(axis=0))
+        public_cards = state2str_1D(Init_states[-1].numpy())
 
         Deck = [i.clone().detach() for i in Init_states]
 
@@ -37,9 +37,9 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
         Q0 = []
         Qout= 0
 
-        unavail = ''
-        history = torch.zeros((nhistory,4,15))
-        lastmove = ['',(0,0)]
+        unavail = torch.zeros(15)
+        history = torch.zeros((nhistory,15))
+        lastmove = ('',(0,0))
 
         Turn = 0
         Npass = 0 # number of pass applying to rules
@@ -66,16 +66,11 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
                 Forcemove = False
 
             # conduct a move
-            myst = state2str(player.sum(dim=0).numpy())
-            cA = Counter(myst)
-            cB = Counter(action[0])
-            newst = ''.join(list((cA - cB).elements()))
-            newunavail = unavail + action[0]
+            # myst = state2str_1D(player)
+            newhiststate = str2state_1D(action[0])
+            newst = player - newhiststate
+            newunavail = unavail + newhiststate
             newhist = torch.roll(history,1,dims=0)
-            if SLM.non_hist == 7:
-                newhist[0] = str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
-            else:
-                newhist[0] = str2state(action[0]) # first row is newest, others are moved downward
                 
             if action[1][0] == 0:
                 Cpass += 1
@@ -83,7 +78,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
                     Npass += 1
                 else:
                     #print('Clear Action')
-                    newlast = ['',(0,0)]
+                    newlast = ('',(0,0))
                     Npass = 0
                     Forcemove = True
             else:
@@ -92,13 +87,13 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
                 Cpass = 0
 
             # update
-            nextstate = str2state(newst)
+            nextstate = newst
             Init_states[Turn%3] = nextstate
             unavail = newunavail
             history = newhist
             lastmove = newlast
 
-            if len(newst) == 0:
+            if newst.max() == 0:
                 break
 
             Turn += 1
@@ -138,7 +133,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             print('It is hard to guess initial difficulty in Bomb Mode!')
             Init_states = init_game_3card_bombmode(bstrength)
 
-    public_cards = state2str(Init_states[-1].numpy().sum(axis=0))
+    public_cards = state2str_1D(Init_states[-1].numpy())
     print(f'Landlord Cards: {public_cards}')
 
     Qs = []
@@ -146,12 +141,10 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
 
     signs = ['-','+']
 
-    unavail = ''
-    if Models[0].non_hist == 7:
-        history = torch.zeros((nhistory,1,15))
-    else:
-        history = torch.zeros((nhistory,4,15))
-    lastmove = ['',(0,0)]
+    unavail = torch.zeros(15)
+    history = torch.zeros((nhistory,15))
+
+    lastmove = ('',(0,0))
 
     Turn = 0
     Npass = 0 # number of pass applying to rules
@@ -167,7 +160,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         Game += f'Player:{iPlayer}|'
     else:
         Game += f'Player:A|'
-    Game += ','.join([state2str(st.sum(dim=0).numpy()) for st in Init_states])
+    Game += ','.join([state2str_1D(st) for st in Init_states])
     Game += '|'
 
     SLM,QV = Models
@@ -186,12 +179,12 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
         else:
             action, Q = get_action_adv_batch_mp(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=6, sleep=True)
+                                       nAct=8, nRoll=40, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=6, sleep=True)
             if thinktime > 0:
                 #pause += thinktime
                 ts = time.time()
 
-        action_suggest = action.copy()
+        action_suggest = [a for a in action]
         #print(Q, action)
         if action_suggest[0] == '':
             action_suggest[0] = 'pass'
@@ -202,9 +195,9 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             all_acts = [[''.join(sorted(a[0])),a[1]] for a in all_acts]
             while True:
                 if len(all_acts) > 1 or Forcemove:
-                    a = input(f"{Label[Turn%3]}: You have: {state2str(player.sum(dim=0).numpy())}. Your move: ")
+                    a = input(f"{Label[Turn%3]}: You have: {state2str_1D(player.numpy())}. Your move: ")
                 else:
-                    a = input(f"{Label[Turn%3]}: You have: {state2str(player.sum(dim=0).numpy())}. No Larger Combo.")
+                    a = input(f"{Label[Turn%3]}: You have: {state2str_1D(player.numpy())}. No Larger Combo.")
                 action = cards2action(a.upper().replace('1','A'))
                 if action is not None:
                     action = [''.join(sorted(action[0])),action[1]]
@@ -230,7 +223,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             Forcemove = False
 
         # conduct a move
-        myst = state2str(player.sum(dim=0).numpy())
+        '''myst = state2str(player.sum(dim=0).numpy())
         cA = Counter(myst)
         cB = Counter(action[0])
         newst = ''.join(list((cA - cB).elements()))
@@ -239,7 +232,15 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         if SLM.non_hist == 7:
             newhist[0] = str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
         else:
-            newhist[0] = str2state(action[0])
+            newhist[0] = str2state(action[0])'''
+        myst = state2str_1D(player)
+        newhiststate = str2state_1D(action[0])
+        newst = player - newhiststate
+        newunavail = unavail + newhiststate
+        newhist = torch.roll(history,1,dims=0)
+        #newhiststate = str2state_1D(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
+        
+        newhist[0] = newhiststate# first row is newest, others are moved downward
         
         play = action[0]
         if action[1][0] == 0:
@@ -249,7 +250,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
                 Npass += 1
             else:
                 #print('Clear Action')
-                newlast = ['',(0,0)]
+                newlast = ('',(0,0))
                 Npass = 0
                 Forcemove = True
         else:
@@ -284,7 +285,8 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
 
 
         # update
-        nextstate = str2state(newst)
+        nextstate = newst
+
         Init_states[Turn%3] = nextstate
         unavail = newunavail
         history = newhist
@@ -292,7 +294,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         
         time.sleep(max(pause - (time.time()-ts),0))
 
-        if len(newst) == 0:
+        if newst.max() == 0:
             break
 
         Turn += 1
@@ -314,7 +316,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         else:
             print(f'\nFarmers Win')
         print('\nCards Remaining:')
-        print(''.join([Label[i]+'        '+state2str(p.sum(dim=0).numpy()).zfill(20).replace('0',' ')+'\n' for i,p in enumerate(Init_states[:-1]) if i != Turn%3]))
+        print(''.join([Label[i]+'        '+state2str_1D(p).zfill(20).replace('0',' ')+'\n' for i,p in enumerate(Init_states[:-1]) if i != Turn%3]))
         if (not automatic) or showall:
             #Q0 = 1/3*(Q0[0]+2-Q0[1]-Q0[2])
             Q0 = Q0[iPlayer]
@@ -407,6 +409,7 @@ if __name__ == '__main__':
     player, automatic, showall, temperature, difficulty, pause, thinktime, thinkplayer, rp, bomb, seed = main()
 
     name = 'H15-V2_2.2'
+    name = 'H15-VBx5_128-128-128_0.01_0.0001-0.0001_256'
     if bomb:
         name += '-bomber'
         mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name + '_' in f]
@@ -427,11 +430,21 @@ if __name__ == '__main__':
     N_feature = 5
     #SLM = Network_Pcard_V1_1(20,5)
     #QV = Network_Qv_Universal_V1_1(6,15,512)
-    SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
-    QV = Network_Qv_Universal_V1_1(6,15,1024)
+    #SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
+    #QV = Network_Qv_Universal_V1_1(6,15,1024)
+
+    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=128, hiddensize=128)
+    QV = Network_Qv_Universal_V1_1_BN(6,15,128)
     
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
+
+    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
+    QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+
+    SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_H15-V2_2.3_0056000000.pt')))
+    QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_H15-V2_2.3_0056000000.pt')))
+    
     SLM.eval()
     QV.eval()
 
