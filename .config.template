@@ -1,6 +1,9 @@
-[USER]
-
 ; Change this file to ".config.ini" to use.
+
+
+
+[TRAIN]
+
 
 ; Master Arguments
 
@@ -84,3 +87,57 @@ rand_param = 0.01
 
 ; Chance of getting a deck full of bombs during selfplay
 bomb_chance = 0.01
+
+
+
+[MATCH]
+
+
+; Model match arguments
+
+; Version of gating model
+; v_gate = H15-V2_2.3
+v_gate = H15-V2_2.3
+
+; Model parameter 0: SLM LSTM
+mg_par0 = 512
+
+; Model parameter 1: SLM MLP
+mg_par1 = 512
+
+; Model parameter 2: QV MLP
+mg_par2 = 512
+
+; Iteration number of gating model
+i_gate = 160000000
+
+; Version of model series
+; v_series = H15-V2_2.3
+v_series = H15-V2_2.3
+
+; Model parameter 0: SLM LSTM
+ms_par0 = 512
+
+; Model parameter 1: SLM MLP
+ms_par1 = 512
+
+; Model parameter 2: QV MLP
+ms_par2 = 512
+
+; Start iteration number
+i_start = 10000000
+
+; Stop iteration number (inclusive)
+i_stop = 160000000
+
+; Iteration number step
+i_step = 10000000
+
+; Number of games per dual
+n_game = 2000
+
+; Max number of CPU processes used in selfplay, could be lower if there are not enough tasks
+n_processes = 12
+
+; Batch number of concurrent games send to GPU by each process
+selfplay_batch_size = 128

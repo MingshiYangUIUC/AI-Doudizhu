@@ -95,7 +95,8 @@ def worker(task_params):
     results = []
     if selfplay_device == 'cuda':
         torch.cuda.empty_cache()
-    results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, selfplay_batch_size, chunksize.item(), bchance)
+    with torch.inference_mode():
+        results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, selfplay_batch_size, chunksize.item(), bchance)
     if selfplay_device == 'cuda':
         torch.cuda.empty_cache()
     print(f'---------- {str(ip).zfill(2)} / {npr} END----------',end='\r')
@@ -166,16 +167,22 @@ def parse_args():
         config.read(os.path.join(wd,args.config))
 
         # Update arguments from config file
-        if 'USER' in config:
+        if 'TRAIN' in config:
             for key in vars(args):
-                if key in config['USER']:
-                    setattr(args, key, type(getattr(args, key))(config['USER'][key]))
+                if key in config['TRAIN']:
+                    config_value = config['TRAIN'][key]
+                    if key == 'auto' or key == 'query' or key == 'logging':
+                        # Convert 'true'/'false' strings to boolean values
+                        setattr(args, key, config_value.lower() == 'true')
+                    else:
+                        setattr(args, key, type(getattr(args, key))(config_value))
 
     return args
 
 if __name__ == '__main__':
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
+    mp.set_sharing_strategy('file_system')
 
     args = parse_args()
 
@@ -308,8 +315,9 @@ if __name__ == '__main__':
         print(SL_X.shape,SL_Y.shape)
 
         # SL part
-        train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker)#, pin_memory=True)
+        #train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
+        train_dataset = TensorDataset(SL_X, SL_Y)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
         opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
         SLM, slm_loss = train_model('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         SLM.to(device)
@@ -320,8 +328,9 @@ if __name__ == '__main__':
         Y_full = torch.cat([torch.concat(list(Ybuffer[i])) for i in range(3)]).unsqueeze(1)
         print(X_full.shape,Y_full.shape)
 
-        train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker)#, pin_memory=True)
+        #train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
+        train_dataset = TensorDataset(X_full, Y_full)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
         opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
         QV, qv_loss = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
         QV.to(device)
@@ -339,7 +348,7 @@ if __name__ == '__main__':
         
         print('Episode time:', round(te-t0),'\n')
 
-        if args.logging:
+        if args.logging == True:
             # log status to file with name according to version
             f = open(os.path.join(wd,'logs',f'training_stat_{version}.txt'),'a')
             # episodes, game stats, train error, 

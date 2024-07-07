@@ -579,19 +579,21 @@ if __name__ == '__main__':
             [SLM,QV]
             )'''
     #SLM = Network_Pcard_V2_1_Trans(15+7, 7, y=1, x=15, trans_heads=4, trans_layers=6, hiddensize=512)
-    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=1024, hiddensize=1024)
-    QV = Network_Qv_Universal_V1_1_BN(6,15,1024)
+    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
+    QV = Network_Qv_Universal_V1_1_BN(6,15,512)
     #SLM.load_state_dict(torch.load(os.path.join(wd,'models','SLM_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
     #QV.load_state_dict(torch.load(os.path.join(wd,'models','QV_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
     #quit()
+    SLM.load_state_dict(torch.load(os.path.join(wd,'models','SLM_H15-V2_2.3_0103300000.pt')))
+    QV.load_state_dict(torch.load(os.path.join(wd,'models','QV_H15-V2_2.3_0103300000.pt')))
     SLM.eval()
     QV.eval()
 
     #torch.save(SLM.state_dict(),os.path.join(wd,'test_models',f'SLM_Trans.pt'))
     #torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_Trans.pt'))
 
-    N_episodes = 512
-    ng = 512
+    N_episodes = 2048
+    ng = 64
     
     seed = random.randint(0,1000000000)
     seed = 12333
@@ -601,9 +603,10 @@ if __name__ == '__main__':
     #SLM = Network_Pcard_V2_1(22,7,1,15, 512,512)
     #QV = Network_Qv_Universal_V1_1(6,15,512)
     with torch.no_grad():
-        out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes,bombchance=0.0,
-                                           bs_max=64)
-        print(out[-1])
+        with torch.inference_mode():
+            out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes,bombchance=0.0,
+                                            bs_max=64)
+            print(out[-1])
 
     max_memory_used = torch.cuda.max_memory_allocated('cuda')
     print(f"Maximum memory used by the model: {max_memory_used / (1024 ** 2)} MB")

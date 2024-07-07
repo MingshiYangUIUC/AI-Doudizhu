@@ -179,7 +179,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
         else:
             action, Q = get_action_adv_batch_mp(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct=8, nRoll=40, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=6, sleep=True)
+                                       nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=6, sleep=True)
             if thinktime > 0:
                 #pause += thinktime
                 ts = time.time()
@@ -338,7 +338,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
                     print('You win, GGWP.')
                 else:
                     print('You lose, GGWP.')
-
+    print('Game Seed for your reference:', seed)
     return Turn, Qs, Log
 
 def main():
@@ -408,8 +408,8 @@ if __name__ == '__main__':
 
     player, automatic, showall, temperature, difficulty, pause, thinktime, thinkplayer, rp, bomb, seed = main()
 
-    name = 'H15-V2_2.2'
-    name = 'H15-VBx5_128-128-128_0.01_0.0001-0.0001_256'
+    name = 'H15-V2_2.3'
+    #name = 'H15-VBx5_128-128-128_0.01_0.0001-0.0001_256'
     if bomb:
         name += '-bomber'
         mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name + '_' in f]
@@ -433,17 +433,17 @@ if __name__ == '__main__':
     #SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
     #QV = Network_Qv_Universal_V1_1(6,15,1024)
 
-    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=128, hiddensize=128)
-    QV = Network_Qv_Universal_V1_1_BN(6,15,128)
+    #SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=128, hiddensize=128)
+    #QV = Network_Qv_Universal_V1_1_BN(6,15,128)
     
-    SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
-    QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
+    #SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
+    #QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
 
     SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
     QV = Network_Qv_Universal_V1_1_BN(6,15,512)
 
-    SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_H15-V2_2.3_0056000000.pt')))
-    QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_H15-V2_2.3_0056000000.pt')))
+    SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
+    QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
     
     SLM.eval()
     QV.eval()
@@ -460,7 +460,7 @@ if __name__ == '__main__':
 
 
     #random.seed(10000)
-    with torch.no_grad():
+    with torch.inference_mode():
         bstrength=200
         Turn, Qs, Log = gamewithplayer(player, [SLM,QV], temperature, pause, N_history, automatic,\
                                        difficulty, showall, bomb, thinktime, thinkplayer, rp, seed)

@@ -643,7 +643,8 @@ def process_loop(_, args):
             sample_states[(Turn + 1) % 3] = str2state_1D(''.join([r2c_base[i] * sample2[i] for i in range(15)]))
             rstates.append(sample_states)
 
-    Qroll = rollout_batch(Turn, SLM, QV, rstates, ractions, unavail, lastmove, Forcemove, history.clone(),
+    with torch.inference_mode():
+        Qroll = rollout_batch(Turn, SLM, QV, rstates, ractions, unavail, lastmove, Forcemove, history.clone(),
                           temperature, Npass, Cpass, depth=ndepth)
     Qroll = Qroll.reshape(N, r + 1)
 

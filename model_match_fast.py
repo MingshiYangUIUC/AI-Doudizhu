@@ -24,6 +24,9 @@ import numpy as np
 from matplotlib import pyplot as plt
 import gc
 
+import argparse
+import configparser
+
 wd = os.path.join(os.path.dirname(__file__))
 
 
@@ -35,13 +38,54 @@ def simulate_match_wrapper(m1, m2, t, device, nh, ng, ne, seed): # dual match
     #m1, m2, t, device, nh, ng, ne, seed = args
     models = [m1, m2]
     torch.cuda.empty_cache()
-    gatingresult = gating_batchpool(models, t, device, Nhistory=nh, ngame=ng, ntask=ne, rseed=seed)
+    with torch.inference_mode():
+        gatingresult = gating_batchpool(models, t, device, Nhistory=nh, ngame=ng, ntask=ne, rseed=seed)
     LW = (gatingresult==0).sum()
     torch.cuda.empty_cache()
     #gatingresult = gating_batchpool(models[::-1], t, device, Nhistory=nh, ngame=ng, ntask=ne, rseed=seed)
     #FW = (np.array(gatingresult)!=0).sum()
     gc.collect()
     return LW #, FW
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run the training script with specified parameters.")
+    
+    # master arguments
+    parser.add_argument('--v_gate', type=str, default='', help="Version of gating model")
+    parser.add_argument('--mg_par0', type=int, default=512, help="Model parameter 0: SLM LSTM")
+    parser.add_argument('--mg_par1', type=int, default=512, help="Model parameter 1: SLM MLP")
+    parser.add_argument('--mg_par2', type=int, default=512, help="Model parameter 2: QV MLP")
+    parser.add_argument('--i_gate', type=int, default='-1', help="Iteration number of gating model")
+    parser.add_argument('--v_series', type=str, default='', help="Version of model series")
+    parser.add_argument('--ms_par0', type=int, default=512, help="Model parameter 0: SLM LSTM")
+    parser.add_argument('--ms_par1', type=int, default=512, help="Model parameter 1: SLM MLP")
+    parser.add_argument('--ms_par2', type=int, default=512, help="Model parameter 2: QV MLP")
+    parser.add_argument('--i_start', type=int, default='-1', help="Start iteration number")
+    parser.add_argument('--i_stop', type=int, default='-1', help="Stop iteration number (inclusive)")
+    parser.add_argument('--i_step', type=int, default='-1', help="Iteration number step")
+    parser.add_argument('--n_game', type=int, default='-1', help="Number of games per dual")
+    parser.add_argument('--n_processes', type=int, default='-1', help="Max number of CPU processes used in selfplay, could be lower if there are not enough tasks")
+    parser.add_argument('--selfplay_batch_size', type=int, default='-1', help="Batch number of concurrent games send to GPU by each process")
+
+    # Add an argument for config file
+    parser.add_argument('--config', type=str, help="Path to configuration file (relative)")
+
+    args = parser.parse_args()
+    #print(args)
+
+    # If config file is provided, parse it and update arguments
+    if args.config:
+        config = configparser.ConfigParser()
+        wd = os.path.dirname(__file__)
+        config.read(os.path.join(wd,args.config))
+        # Update arguments from config file
+        if 'MATCH' in config:
+            for key in vars(args):
+                if key in config['MATCH']:
+                    #print(key, config['MATCH'][key])
+                    setattr(args, key, type(getattr(args, key))(config['MATCH'][key]))
+
+    return args
 
 if __name__ == '__main__':
 
@@ -55,30 +99,16 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
     
     # determine which models participate in the contest
-    try:
-        nsim_perplayer = int(sys.argv[1])
-        pstart = int(sys.argv[2])
-        pstop = int(sys.argv[3])
-        pstep = int(sys.argv[4])
-        players = [str(i).zfill(10) for i in range(pstart,pstop+1,pstep)]
-        terminate = False
-
-    except:
-        nsim_perplayer = 5000
-        players = [str(i).zfill(10) for i in range(5000000,5000000+1,5000000)]
-        terminate = True
     
-    if terminate:
-        print('Arguments incomplete. Please provide n-sim, player-start, player-stop (inclusive), player-step.')
-        sys.exit(1)
+    args = parse_args()
 
+    players = [str(i).zfill(10) for i in range(args.i_start,args.i_stop+1,args.i_step)]
+    num_processes = min(args.n_processes,(len(players))*2)
+    nsim_perplayer = args.n_game
     nsim = nsim_perplayer
-    players.append(players[-1])
-    num_processes = min(12,(len(players)-1)*2)
-
-    gate_player_index = len(players)-1 # other players play with this player
-
-    versions = ['H15-V2_2.3']
+    players.append(str(args.i_gate).zfill(10))
+    gate_player_index = len(players)-1 # other players play with this player, which is the last player
+    versions = [args.v_series]
 
 
     models = []
@@ -88,42 +118,46 @@ if __name__ == '__main__':
     for v in versions:
         fullplayers += players
 
-    for session in players:
-        for version in versions:
 
-            # V2_1_2-Contester
-            #SLM = Network_Pcard_V1_1(20,5)
-            #QV = Network_Qv_Universal_V1_1(6,15,512)
-            # V2_2_1
-            try:
-                SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
-                QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+    for i, session in enumerate(players):
+        if session != players[-1] or i != len(players)-1:
+            version = args.v_series
+            SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
+            QV = Network_Qv_Universal_V1_1_BN(6,15,args.ms_par2)
 
-                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
-            except:
-                SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
-                QV = Network_Qv_Universal_V1_1(6,15,1024)
+            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+        
+        else:
+            version = args.v_gate
+            SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
+            QV = Network_Qv_Universal_V1_1_BN(6,15,args.mg_par2)
 
-                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
-            SLM.eval()
-            QV.eval()
+            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            '''SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
+            QV = Network_Qv_Universal_V1_1(6,15,1024)
 
-            models.append(
-                [SLM,QV]
-                )
+            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))'''
+        
+        SLM.eval()
+        QV.eval()
+
+        models.append(
+            [SLM,QV]
+            )
     
     ax_player = list(range(nplayer))
 
-    outfile2 = os.path.join(wd,'data',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-1]}.txt')
+    outfile2 = os.path.join(wd,'data',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-2]}-{fullplayers[-1]}.txt')
 
     try:
         f = open(outfile2,'r').readlines()
         Fullstat = np.zeros((nplayer,3),dtype=np.int64)
-        Fullstat[:,0] = np.array([int(s.split('-')[-3]) for s in f[1:]],dtype=np.int64)
-        Fullstat[:,1] = np.array([int(s.split('-')[-2]) for s in f[1:]],dtype=np.int64)
-        Fullstat[:,-1] = np.array([int(s.split('-')[-1]) for s in f[1:]],dtype=np.int64)
+        Fullstat[:,0] = np.array([int(s.split(' - ')[-3]) for s in f[1:]],dtype=np.int64)
+        Fullstat[:,1] = np.array([int(s.split(' - ')[-2]) for s in f[1:]],dtype=np.int64)
+        Fullstat[:,-1] = np.array([int(s.split(' - ')[-1]) for s in f[1:]],dtype=np.int64)
         #ngames = np.array([int(s.split('-')[-1]) for s in f[1:]],dtype=np.int64)
         csim = int(f[0].split()[1])
     except:
@@ -139,16 +173,16 @@ if __name__ == '__main__':
     print(seed)
 
     # create gating test
-    args = []
+    pargs = []
     for i in range(len(players)):
         if i != gate_player_index:
-            args.append((models[i], models[gate_player_index], 0,'cuda',15,64,nsim_perplayer,seed))
-            args.append((models[gate_player_index], models[i], 0,'cuda',15,64,nsim_perplayer,seed))
+            pargs.append((models[i], models[gate_player_index], 0,'cuda',15,64,nsim_perplayer,seed))
+            pargs.append((models[gate_player_index], models[i], 0,'cuda',15,64,nsim_perplayer,seed))
 
-    print(len(args),len(args[0]),len(models))
+    print(len(pargs),len(pargs[0]),len(models))
     # Create a pool of workers and distribute the tasks
     with mp.Pool(processes=num_processes) as pool:
-        results = pool.starmap(simulate_match_wrapper, args, chunksize=1)
+        results = pool.starmap(simulate_match_wrapper, pargs, chunksize=1)
         #results = list(tqdm(pool.imap_unordered(simulate_match_wrapper, tasks), total=len(tasks)))
 
     #print(len(results))
@@ -172,7 +206,11 @@ if __name__ == '__main__':
     Fullstat += fullstat
 
     for i in range(nplayer):
-        f.write(f'M{str(fullplayers[i]).zfill(3)} - {Fullstat[i][0]} - {Fullstat[i][1]} - {Fullstat[i][2]}\n')
+        if i != len(players)-1:
+            version = args.v_series
+        else:
+            version = args.v_gate
+        f.write(f'V{version}M{str(fullplayers[i]).zfill(3)} - {Fullstat[i][0]} - {Fullstat[i][1]} - {Fullstat[i][2]}\n')
     f.close()
 
     WRL = Fullstat[:,0] / Fullstat[:,-1]
@@ -186,5 +224,6 @@ if __name__ == '__main__':
         plt.plot(fullplayers[i*len(players):(i+1)*len(players)],WRF)
         plt.plot(fullplayers[i*len(players):(i+1)*len(players)],(WRL+WRF)/2)
     plt.axhline(0.5,zorder=-10,alpha=0.6,color='black')
-    plt.savefig(os.path.join(wd,'data',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-1]}.png'))
+    plt.gca().xaxis.set_tick_params(rotation=45)
+    plt.savefig(os.path.join(wd,'data',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-2]}-{fullplayers[-1]}.png'),bbox_inches='tight')
     #plt.show()
