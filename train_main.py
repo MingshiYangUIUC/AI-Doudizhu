@@ -42,13 +42,13 @@ def train_model(device, model, criterion, loader, nep, optimizer):
         
         for inputs, targets in tqdm(loader):
             if inputs.size(0) > 1:
-                inputs, targets = inputs.to(device), targets.to(device)
+                inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
                 
-                optimizer.zero_grad()  # Zero the gradients
                 outputs = model(inputs)  # Forward pass
                 loss = criterion(outputs, targets)  # Calculate loss
                 loss.backward()  # Backward pass
                 optimizer.step()  # Optimize
+                optimizer.zero_grad()  # Zero the gradients
                 
                 running_loss += loss.item()
         

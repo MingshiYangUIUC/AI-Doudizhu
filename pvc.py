@@ -179,7 +179,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
         else:
             action, Q = get_action_adv_batch_mp(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=6, sleep=True)
+                                       nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=12, sleep=True)
             if thinktime > 0:
                 #pause += thinktime
                 ts = time.time()

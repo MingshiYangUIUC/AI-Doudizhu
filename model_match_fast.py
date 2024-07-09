@@ -89,7 +89,7 @@ def parse_args():
 
 if __name__ == '__main__':
 
-    eval_device = 'cpu'
+    eval_device = 'cuda'
     device = 'cpu'
 
     if torch.get_num_threads() > 1:
@@ -130,16 +130,18 @@ if __name__ == '__main__':
         
         else:
             version = args.v_gate
-            SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
-            QV = Network_Qv_Universal_V1_1_BN(6,15,args.mg_par2)
+            try: 
+                SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
+                QV = Network_Qv_Universal_V1_1_BN(6,15,args.mg_par2)
 
-            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
-            '''SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
-            QV = Network_Qv_Universal_V1_1(6,15,1024)
+                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            except:
+                SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
+                QV = Network_Qv_Universal_V1_1(6,15,1024)
 
-            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))'''
+                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
         
         SLM.eval()
         QV.eval()
@@ -176,8 +178,8 @@ if __name__ == '__main__':
     pargs = []
     for i in range(len(players)):
         if i != gate_player_index:
-            pargs.append((models[i], models[gate_player_index], 0,'cuda',15,64,nsim_perplayer,seed))
-            pargs.append((models[gate_player_index], models[i], 0,'cuda',15,64,nsim_perplayer,seed))
+            pargs.append((models[i], models[gate_player_index], 0,eval_device,15,64,nsim_perplayer,seed))
+            pargs.append((models[gate_player_index], models[i], 0,eval_device,15,64,nsim_perplayer,seed))
 
     print(len(pargs),len(pargs[0]),len(models))
     # Create a pool of workers and distribute the tasks
