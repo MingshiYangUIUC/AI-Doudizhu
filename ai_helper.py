@@ -26,13 +26,16 @@ if __name__ == '__main__':
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
     name = 'H15-V2_2.3'
+    name = 'H15-V2_3.0'
     mfiles = [int(f.split('_')[-1][:-3]) for f in os.listdir(os.path.join(wd,'models')) if '_'+name+'_' in f]
 
     v_M = f'{name}_{str(max(mfiles)).zfill(10)}'
     print('Model version:', v_M)
 
-    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
-    QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+    #SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
+    #QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+    SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=256, hiddensize=512)
+    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,256,512)
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
     SLM.eval()
@@ -64,6 +67,7 @@ if __name__ == '__main__':
     gamestate = init_game_3card()
 
     unavail = torch.zeros(15)
+    played_cards = torch.zeros((3,15))
     history = torch.zeros((15,15))
     lastmove = ('',(0,0))
 
@@ -97,11 +101,15 @@ if __name__ == '__main__':
         # suggest move!
         else:
             with torch.inference_mode():
-                if thinktime == 0:
-                    action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,gamestate,unavail,lastmove, Forcemove, history, temperature, show_sl)
-                else:
-                    action, Q = get_action_adv_batch_mp(Turn, SLM, QV, gamestate,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct=6, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=12, sleep=True)
+                if 'V2_2' in name:# back compatible
+                    if thinktime == 0:
+                        action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,gamestate,unavail,lastmove, Forcemove, history, temperature, show_sl)
+                    else:
+                        action, Q = get_action_adv_batch_mp(Turn, SLM, QV, gamestate,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
+                                        nAct=6, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=12, sleep=True)
+                elif 'V2_3' in name:
+                    action, Q = get_action_serial_V2_3_0(Turn, SLM,QV,gamestate,unavail,played_cards,lastmove, Forcemove, history, temperature, show_sl)
+            # else:
             if action[0] == '':
                 sp = 'pass'
             else:
@@ -125,6 +133,7 @@ if __name__ == '__main__':
         newunavail = unavail + newhiststate
         newhist = torch.roll(history,1,dims=0)
         newhist[0] = newhiststate# first row is newest, others are moved downward
+        played_cards[Turn % 3] += newhiststate
         
         play = action[0]
         if action[1][0] == 0:

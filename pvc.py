@@ -13,6 +13,7 @@ import os
 import sys
 
 import argparse
+import configparser
 
 from datetime import datetime
 
@@ -38,6 +39,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
         Qout= 0
 
         unavail = torch.zeros(15)
+        played_cards = torch.zeros((3,15))
         history = torch.zeros((nhistory,15))
         lastmove = ('',(0,0))
 
@@ -55,7 +57,10 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
 
             #print(CC)
 
-            action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature)
+            if 'V2_2' in name:
+                action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature=0)
+            elif 'V2_3' in name:
+                action, Q = get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature=0)
             
 
             if Turn < 3:
@@ -71,6 +76,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
             newst = player - newhiststate
             newunavail = unavail + newhiststate
             newhist = torch.roll(history,1,dims=0)
+            played_cards[Turn % 3] += newhiststate
                 
             if action[1][0] == 0:
                 Cpass += 1
@@ -142,6 +148,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
     signs = ['-','+']
 
     unavail = torch.zeros(15)
+    played_cards = torch.zeros((3,15))
     history = torch.zeros((nhistory,15))
 
     lastmove = ('',(0,0))
@@ -174,15 +181,20 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         #print(CC)
 
         hint = showall and Turn%3==iPlayer
-        
-        if (Turn%3==iPlayer and not automatic) or thinktime == 0 or (str(Turn%3) not in thinkplayer):
-            action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
-        else:
-            action, Q = get_action_adv_batch_mp(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
-                                       nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=12, sleep=True)
-            if thinktime > 0:
-                #pause += thinktime
-                ts = time.time()
+
+        if 'V2_2' in name:# back compatible
+            if (Turn%3==iPlayer and not automatic) or thinktime == 0 or (str(Turn%3) not in thinkplayer):
+                action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
+            else:
+                action, Q = get_action_adv_batch_mp(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
+                                        nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=12, sleep=True)
+                if thinktime > 0:
+                    #pause += thinktime
+                    ts = time.time()
+        elif 'V2_3' in name:
+            #if (Turn%3==iPlayer and not automatic):
+            action, Q = get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,hint)
+            # else:
 
         action_suggest = [a for a in action]
         #print(Q, action)
@@ -203,7 +215,11 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
                     action = [''.join(sorted(action[0])),action[1]]
                     if action in all_acts:
                         action = [''.join(sorted(action[0], key=lambda x: c2r_base[x])),action[1]]
-                        Q_r = evaluate_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
+                        if 'V2_2' in name:
+                            Q_r = evaluate_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
+                                                                action[0])
+                        elif 'V2_3' in name:
+                            Q_r = evaluate_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,
                                                                 action[0])
                         ts = time.time()
                         break
@@ -241,6 +257,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         #newhiststate = str2state_1D(action[0])# str2state(action[0]).sum(axis=-2,keepdims=True) 
         
         newhist[0] = newhiststate# first row is newest, others are moved downward
+        played_cards[Turn % 3] += newhiststate
         
         play = action[0]
         if action[1][0] == 0:
@@ -349,38 +366,23 @@ def main():
     parser.add_argument("-a", "--automatic", action="store_true", help="Enable automatic mode: three AI playing and you just spectate one of them.")
     parser.add_argument("-b", "--bombmode", action="store_true", help="Enable bomb mode: players are more likely to get bombs.")
     parser.add_argument("-sh", "--showall", action="store_true", help="Show all statistics regardless of game mode.")
-    parser.add_argument("-r", "--role", type=int, choices=[0, 1, 2], help="Role number. 0: Landlord, 1: Farmer-0, 2: Farmer-1. ")
-    parser.add_argument("-t", "--temperature", type=float, help="Softmax temperature: randomness of AI actions (float >= 0)")
+    parser.add_argument("-v", "--version", type=str, default="", help="Model Version")
+    parser.add_argument("-r", "--role", type=int, default=-1, choices=[-1, 0, 1, 2], help="Role number. -1: random, 0: Landlord, 1: Farmer-0, 2: Farmer-1. ")
+    parser.add_argument("-t", "--temperature", type=float, default=0.0, help="Softmax temperature: randomness of AI actions (float >= 0)")
     parser.add_argument("-d", "--difficulty", type=int, choices=[1, 2, 3, 4, 5], help="Difficulty level as quality of initial cards. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible.")
-    parser.add_argument("-p", "--pausetime", type=float, help="Pause after each move in seconds (float >= 0)")
-    parser.add_argument("-th", "--thinktime", type=float, help="AI thinktime (float >= 0)")
-    parser.add_argument("-tp", "--thinkplayer", type=str, help="The player who thinks (string containing 012)")
-    parser.add_argument("-rp", "--riskpenalty", type=float, help="AI risk penalty (float >= 0)")
-    parser.add_argument("-s", "--seed", type=int, help="Game Seed (int)")
+    parser.add_argument("-p", "--pausetime", type=float, default=0.5, help="Pause after each move in seconds (float >= 0)")
+    parser.add_argument("-th", "--thinktime", type=float, default=0.0, help="AI thinktime (float >= 0)")
+    parser.add_argument("-tp", "--thinkplayer", type=str, default='012', help="The player who thinks (string containing 012)")
+    parser.add_argument("-rp", "--riskpenalty", type=float, default=0.0,help="AI risk penalty (float >= 0)")
+    parser.add_argument("-s", "--seed", type=int, default=random.randint(-2**32, 2**32-1), help="Game Seed (int)")
+
+    # Add an argument for config file
+    parser.add_argument('--config', type=str, help="Path to configuration file (relative)")
 
     # Parse arguments
     args = parser.parse_args()
 
-    # If no player number is provided, select a random one from 0, 1, 2
-    if args.role is None:
-        args.role = random.choice([0, 1, 2])
-        print(f"No role number provided, randomly selected: {args.role}")
-    else:
-        print(f"role Number: {args.role}")
-    if args.temperature is None:
-        args.temperature = 0.0
-    print(f'Softmax Temperature for AI: {args.temperature}')
-
-    if args.pausetime is None:
-        args.pausetime = 0.5
-    if args.thinktime is None:
-        args.thinktime = 0.0
-    else:
-        args.pausetime = 0.1
-    if args.riskpenalty is None:
-        args.riskpenalty = 0.0
-    if args.thinkplayer is None: # set to everyone think
-        args.thinkplayer = '012'
+    
 
     # Automatic mode check
     if args.automatic:
@@ -391,9 +393,38 @@ def main():
         print("Show all stats.")
     if args.bombmode:
         print("!!!!!!BOMB mode ENABLED!!!!!!")
+
+    # If config file is provided, parse it and update arguments
+    if args.config:
+        config = configparser.ConfigParser()
+        wd = os.path.dirname(__file__)
+        config.read(os.path.join(wd,args.config))
+
+        # Update arguments from config file
+        if 'PVC' in config:
+            for key in vars(args):
+                if key in config['PVC']:
+                    config_value = config['PVC'][key]
+                    if key == 'automatic' or key == 'bombmode' or key == 'showall':
+                        # Convert 'true'/'false' strings to boolean values
+                        setattr(args, key, config_value.lower() == 'true')
+                    elif key == 'seed':
+                        if config['PVC'][key] == '':
+                            pass
+                        else:
+                            setattr(args, key, type(getattr(args, key))(config_value))
+                    else:
+                        setattr(args, key, type(getattr(args, key))(config_value))
+            print(config['PVC'])
     
-    return args.role, args.automatic, args.showall, args.temperature, args.difficulty, args.pausetime, \
-           args.thinktime, args.thinkplayer, args.riskpenalty, args.bombmode, args.seed
+    # If no player number is provided, select a random one from 0, 1, 2
+    if args.role == -1:
+        args.role = random.choice([0, 1, 2])
+        print(f"Randomly selected: {args.role}")
+    else:
+        print(f"role number: {args.role}")
+    
+    return args
 
 
 if __name__ == '__main__':
@@ -406,9 +437,13 @@ if __name__ == '__main__':
 
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    player, automatic, showall, temperature, difficulty, pause, thinktime, thinkplayer, rp, bomb, seed = main()
+    #player, automatic, showall, temperature, difficulty, pause, thinktime, thinkplayer, rp, bomb, seed = main()
+    args = main()
+    print(args)
 
-    name = 'H15-V2_2.3'
+    name = args.version
+    bomb = args.bombmode
+    N_history = int(args.version[1:3])
     #name = 'H15-VBx5_128-128-128_0.01_0.0001-0.0001_256'
     if bomb:
         name += '-bomber'
@@ -426,21 +461,9 @@ if __name__ == '__main__':
     #v_M = 'H15-V2_1.2-Contester_0022600000'
     print('Model version:', v_M)
     
-    N_history = int(v_M[1:3])
-    N_feature = 5
-    #SLM = Network_Pcard_V1_1(20,5)
-    #QV = Network_Qv_Universal_V1_1(6,15,512)
-    #SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
-    #QV = Network_Qv_Universal_V1_1(6,15,1024)
 
-    #SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=128, hiddensize=128)
-    #QV = Network_Qv_Universal_V1_1_BN(6,15,128)
-    
-    #SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
-    #QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
-
-    SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512)
-    QV = Network_Qv_Universal_V1_1_BN(6,15,512)
+    SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=256, hiddensize=512)
+    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,256,512)
 
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
@@ -453,17 +476,17 @@ if __name__ == '__main__':
 
     print(f'- Type in any combination of your available cards, press enter to play.\n  Press enter directly to pass.')
     print('- 10 is X, small joker is B, large joker is R.\n')
-    if not automatic:
-        print(f'- You are playing as {Label[player]}.\n')
-    if automatic:
-        print(f'- You are spectating AI playing, you set difficulty for {Label[player]}.\n')
+    if not args.automatic:
+        print(f'- You are playing as {Label[args.role]}.\n')
+    else:
+        print(f'- You are spectating AI playing, you set difficulty for {Label[args.role]}.\n')
 
 
     #random.seed(10000)
     with torch.inference_mode():
         bstrength=200
-        Turn, Qs, Log = gamewithplayer(player, [SLM,QV], temperature, pause, N_history, automatic,\
-                                       difficulty, showall, bomb, thinktime, thinkplayer, rp, seed)
+        Turn, Qs, Log = gamewithplayer(args.role, [SLM,QV], args.temperature, args.pausetime, N_history, args.automatic,\
+                                       args.difficulty, args.showall, args.bombmode, args.thinktime, args.thinkplayer, args.riskpenalty, args.seed)
 
     #print(Log)
 

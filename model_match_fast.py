@@ -89,7 +89,7 @@ def parse_args():
 
 if __name__ == '__main__':
 
-    eval_device = 'cuda'
+    eval_device = 'cpu'
     device = 'cpu'
 
     if torch.get_num_threads() > 1:
@@ -122,8 +122,8 @@ if __name__ == '__main__':
     for i, session in enumerate(players):
         if session != players[-1] or i != len(players)-1:
             version = args.v_series
-            SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
-            QV = Network_Qv_Universal_V1_1_BN(6,15,args.ms_par2)
+            SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
+            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.ms_par2)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
             QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
@@ -131,8 +131,8 @@ if __name__ == '__main__':
         else:
             version = args.v_gate
             try: 
-                SLM = Network_Pcard_V2_1_BN(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
-                QV = Network_Qv_Universal_V1_1_BN(6,15,args.mg_par2)
+                SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
+                QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.mg_par2)
 
                 SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
                 QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
