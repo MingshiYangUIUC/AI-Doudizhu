@@ -128,6 +128,7 @@ def parse_args():
     parser.add_argument('-t', '--train', type=int, default=10000, help="Task episode number")
     parser.add_argument('-q', '--query', action='store_true', help="Query status mode: return most recent model version")
     parser.add_argument('-l', '--logging', action='store_true', help="Log training status")
+    parser.add_argument('-s', '--savedata', action='store_true', help="Store selfplay data to disk ./train")
 
     # model arguments
     parser.add_argument('--version', type=str, default='V2_2.2', help="Version of the model")
@@ -157,7 +158,7 @@ def parse_args():
     parser.add_argument('--bomb_chance', type=float, default=0.01, help="Chance of getting a deck full of bombs during selfplay")
     
     # Add an argument for config file
-    parser.add_argument('--config', type=str, help="Path to configuration file (relative)")
+    parser.add_argument('--config', type=str, default='.config.ini', help="Path to configuration file (relative)")
 
     args = parser.parse_args()
 
@@ -172,7 +173,7 @@ def parse_args():
             for key in vars(args):
                 if key in config['TRAIN']:
                     config_value = config['TRAIN'][key]
-                    if key == 'auto' or key == 'query' or key == 'logging':
+                    if key == 'auto' or key == 'query' or key == 'logging' or key == 'savedata':
                         # Convert 'true'/'false' strings to boolean values
                         setattr(args, key, config_value.lower() == 'true')
                     else:
@@ -189,6 +190,11 @@ if __name__ == '__main__':
 
     device = 'cpu'
     selfplay_device = 'cuda'
+
+    if args.savedata: # create directory if necessary
+        if not os.path.isdir(os.path.join(wd,'train')):
+            os.mkdir(os.path.join(wd,'train'))
+            print('Created directory ./train to store data')
 
     selfplay_device = args.selfplay_device
     selfplay_batch_size = args.selfplay_batch_size
@@ -320,6 +326,11 @@ if __name__ == '__main__':
         print(SL_X.shape,SL_Y.shape)
 
         # SL part
+        if args.savedata: # save selfplay data
+            note = f'{version}_{str(Total_episodes).zfill(10)}'
+            torch.save(SL_X.clone().to(torch.int8), f'SL_X_int8_{note}.pt')
+            torch.save(SL_Y.clone().to(torch.int8), f'SL_Y_int8_{note}.pt')
+
         #train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
         train_dataset = TensorDataset(SL_X, SL_Y)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
@@ -333,6 +344,12 @@ if __name__ == '__main__':
         Y_full = torch.cat([torch.concat(list(Ybuffer[i])) for i in range(3)]).unsqueeze(1)
         print(X_full.shape,Y_full.shape)
 
+        if args.savedata: # save selfplay data
+            note = f'{version}_{str(Total_episodes).zfill(10)}'
+            # no need to save X_full, since X_full is constructed by [SL_X[:,:8,0], SL_y_hat, lstm_out_hat]
+            # torch.save(X_full[:,:-args.m_par0].clone().to(torch.int8), f'QV_X-nolstm_int8_{note}.pt')
+            torch.save(Y_full.clone().to(torch.int8), f'QV_Y_int8_{note}.pt')
+        
         #train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
         train_dataset = TensorDataset(X_full, Y_full)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)

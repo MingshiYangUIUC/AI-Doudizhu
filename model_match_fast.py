@@ -66,9 +66,10 @@ def parse_args():
     parser.add_argument('--n_game', type=int, default='-1', help="Number of games per dual")
     parser.add_argument('--n_processes', type=int, default='-1', help="Max number of CPU processes used in selfplay, could be lower if there are not enough tasks")
     parser.add_argument('--selfplay_batch_size', type=int, default='-1', help="Batch number of concurrent games send to GPU by each process")
+    parser.add_argument('--selfplay_device', type=str, default='cpu', help="Device for selfplay games")
 
     # Add an argument for config file
-    parser.add_argument('--config', type=str, help="Path to configuration file (relative)")
+    parser.add_argument('--config', type=str, default='.config.ini', help="Path to configuration file (relative)")
 
     args = parser.parse_args()
     #print(args)
@@ -89,7 +90,6 @@ def parse_args():
 
 if __name__ == '__main__':
 
-    eval_device = 'cpu'
     device = 'cpu'
 
     if torch.get_num_threads() > 1:
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     players.append(str(args.i_gate).zfill(10))
     gate_player_index = len(players)-1 # other players play with this player, which is the last player
     versions = [args.v_series]
-
+    eval_device = args.selfplay_device
 
     models = []
     nplayer = len(players)*len(versions)
@@ -152,7 +152,7 @@ if __name__ == '__main__':
     
     ax_player = list(range(nplayer))
 
-    outfile2 = os.path.join(wd,'data',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-2]}-{fullplayers[-1]}.txt')
+    outfile2 = os.path.join(wd,'data_gating',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-2]}-{fullplayers[-1]}.txt')
 
     try:
         f = open(outfile2,'r').readlines()
@@ -227,5 +227,6 @@ if __name__ == '__main__':
         plt.plot(fullplayers[i*len(players):(i+1)*len(players)],(WRL+WRF)/2)
     plt.axhline(0.5,zorder=-10,alpha=0.6,color='black')
     plt.gca().xaxis.set_tick_params(rotation=45)
-    plt.savefig(os.path.join(wd,'data',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-2]}-{fullplayers[-1]}.png'),bbox_inches='tight')
+    plt.grid()
+    plt.savefig(os.path.join(wd,'data_gating',f'winrates_{"".join(versions)}_{fullplayers[0]}-{fullplayers[-2]}-{fullplayers[-1]}.png'),bbox_inches='tight')
     #plt.show()

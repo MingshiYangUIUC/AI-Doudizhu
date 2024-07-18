@@ -12,6 +12,7 @@
 *.vsix
 
 data
+data_gating
 train
 games
 models
@@ -30,3 +31,4 @@ logs
 *.so
 cpp/build
 .config.ini
+compile_model.py

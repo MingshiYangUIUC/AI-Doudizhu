@@ -9,6 +9,8 @@ from base_utils import *
 
 from rollout import *
 
+from rollout_serial import get_action_adv
+
 import os
 import sys
 
@@ -194,6 +196,11 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         elif 'V2_3' in name:
             #if (Turn%3==iPlayer and not automatic):
             action, Q = get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,hint)
+            
+            # experiment serial rollout for botzone
+            if (Turn%3==iPlayer and not automatic) and thinktime > 0 and (str(Turn%3) in thinkplayer):
+                actionx, Qx = get_action_adv(Turn, SLM, QV, Init_states, unavail, played_cards, lastmove, Forcemove, history, temperature, Npass, Cpass, nAct=5, nRoll=100, ndepth=12, maxtime=4, sleep=False)
+            print(actionx, Qx)
             # else:
 
         action_suggest = [a for a in action]
@@ -377,7 +384,7 @@ def main():
     parser.add_argument("-s", "--seed", type=int, default=random.randint(-2**32, 2**32-1), help="Game Seed (int)")
 
     # Add an argument for config file
-    parser.add_argument('--config', type=str, help="Path to configuration file (relative)")
+    parser.add_argument('--config', type=str, default='.config.ini', help="Path to configuration file (relative)")
 
     # Parse arguments
     args = parser.parse_args()
@@ -395,9 +402,10 @@ def main():
         print("!!!!!!BOMB mode ENABLED!!!!!!")
 
     # If config file is provided, parse it and update arguments
-    if args.config:
+    wd = os.path.dirname(__file__)
+    if args.config and os.path.isfile(os.path.join(wd,args.config)):
+
         config = configparser.ConfigParser()
-        wd = os.path.dirname(__file__)
         config.read(os.path.join(wd,args.config))
 
         # Update arguments from config file
@@ -417,7 +425,7 @@ def main():
                         setattr(args, key, type(getattr(args, key))(config_value))
             print(config['PVC'])
     
-    # If no player number is provided, select a random one from 0, 1, 2
+    # If player number -1 is provided, select a random one from 0, 1, 2
     if args.role == -1:
         args.role = random.choice([0, 1, 2])
         print(f"Randomly selected: {args.role}")
