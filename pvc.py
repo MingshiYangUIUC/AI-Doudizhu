@@ -200,7 +200,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             # experiment serial rollout for botzone
             if (Turn%3==iPlayer and not automatic) and thinktime > 0 and (str(Turn%3) in thinkplayer):
                 actionx, Qx = get_action_adv(Turn, SLM, QV, Init_states, unavail, played_cards, lastmove, Forcemove, history, temperature, Npass, Cpass, nAct=5, nRoll=100, ndepth=12, maxtime=4, sleep=False)
-            print(actionx, Qx)
+                print(actionx, Qx)
             # else:
 
         action_suggest = [a for a in action]
