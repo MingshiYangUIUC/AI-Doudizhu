@@ -32,3 +32,5 @@ logs
 cpp/build
 .config.ini
 compile_model.py
+mingshiyang
+train_transfer.ipynb

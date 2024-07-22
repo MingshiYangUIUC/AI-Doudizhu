@@ -181,7 +181,7 @@ if __name__ == '__main__':
             pargs.append((models[i], models[gate_player_index], 0,eval_device,15,64,nsim_perplayer,seed))
             pargs.append((models[gate_player_index], models[i], 0,eval_device,15,64,nsim_perplayer,seed))
 
-    print(len(pargs),len(pargs[0]),len(models))
+    print(len(pargs))#,len(pargs[0]),len(models))
     # Create a pool of workers and distribute the tasks
     with mp.Pool(processes=num_processes) as pool:
         results = pool.starmap(simulate_match_wrapper, pargs, chunksize=1)

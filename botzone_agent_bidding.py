@@ -10,38 +10,10 @@ from collections import Counter
 from itertools import combinations
 import os
 import logging
-#from collections import defaultdict
-
-wd = os.path.dirname(__file__)
 
 # 红桃 方块 黑桃 草花
 # 3 4 5 6 7 8 9 10 J Q K A 2 joker & Joker
-# (0-h3 1-d3 2-s3 3-c3) (4-h4 5-d4 6-s4 7-c4) …… 52-小王->16 53-大王->17
-
-full_input = json.loads(input())
-my_history = full_input["responses"]
-use_info = full_input["requests"][0]
-poker, history, publiccard = use_info["own"], use_info["history"], use_info["publiccard"]
-last_history = full_input["requests"][-1]["history"]
-currBotID = 0 # 判断自己是什么身份，地主0 or 农民甲1 or 农民乙2
-if len(history[0]) == 0:
-    if len(history[1]) != 0:
-        currBotID = 1
-else:
-    currBotID = 2
-history = history[2-currBotID:]
-
-for i in range(len(my_history)):
-    history += [my_history[i]]
-    history += full_input["requests"][i+1]["history"]
-
-lenHistory = len(history)
-
-for tmp in my_history:
-    for j in tmp:
-        poker.remove(j)
-poker.sort() # 用0-53编号的牌
-
+# (0-h3 1-d3 2-s3 3-c3) (4-h4 5-d4 6-s4 7-c4) …… 52-joker->16 53-Joker->17
 
 def n2t(n): # convert card to tensor index
     if n < 52:
@@ -49,6 +21,146 @@ def n2t(n): # convert card to tensor index
     else:
         return n - 52 + 13
 
+def evalAndBid(poker, maxScore):
+    
+    class BidModel(nn.Module):
+        def __init__(self, input_size=15, hidden_size=128, num_hidden_layers=4, output_size=1):
+            super(BidModel, self).__init__()
+            
+            # Define the input layer
+            self.input_layer = nn.Linear(input_size, hidden_size)
+            
+            # Define the hidden layers
+            self.hidden_layers = nn.ModuleList()
+            for _ in range(num_hidden_layers - 1):
+                self.hidden_layers.append(nn.Linear(hidden_size, hidden_size))
+            
+            # Define the output layer
+            self.output_layer = nn.Linear(hidden_size, output_size)
+        
+        def forward(self, x):
+            # Apply the input layer with ReLU activation
+            x = F.relu(self.input_layer(x))
+            
+            # Apply each hidden layer with ReLU activation
+            for layer in self.hidden_layers:
+                x = F.relu(layer(x))
+            
+            # Apply the output layer
+            x = torch.sigmoid(self.output_layer(x))
+            
+            return x
+        
+    EV = BidModel(input_size=15, hidden_size=128, num_hidden_layers=5, output_size=1)
+
+    data_dir = os.path.join(os.getcwd(), 'data')
+    EV.load_state_dict(torch.load(os.path.join(data_dir,f'EV_best.pt')))
+    EV.eval()
+    # construct input state
+    player = torch.zeros((15),dtype=torch.int8)
+    for n in poker:
+        player[n2t(n)] += 1
+    
+    q = float(EV(player.to(torch.float32).unsqueeze(0)).flatten())
+    
+    #evals = [i for i in range(maxScore+1, 4)]
+    #evals += [0]
+    
+    # simple strategy
+    # score 0: q < 0.5
+    # score 1: 0.67 > q > 0.5
+    # score 2: 0.83 > q > 0.67
+    # score 3: q > 0.83
+    if q < 0.5:
+        score_q = 0
+    elif q < 0.6333:
+        score_q = 1
+    elif q < 0.8666:
+        score_q = 2
+    else:
+        score_q = 3
+    #score_q = min(float(q) // 0.25,3)
+    if score_q == 0 or score_q > maxScore:
+        return score_q
+    else:
+        return 0
+
+def printBid(poker, bidHistory):
+    bidHistory += [0]
+    maxScore = max(bidHistory)
+    if len(full_input["requests"]) == 1:
+        print(json.dumps({
+            "response": evalAndBid(poker, maxScore)
+        }))
+
+def getPointFromSerial(x):
+    return int(x/4) + 3 + (x==53)
+
+def convertToPointList(poker):
+    return [getPointFromSerial(i) for i in poker]
+
+_online = os.environ.get("USER", "") == "root"
+
+if _online:
+    full_input = json.loads(input())
+else:
+    with open("botlogs.json") as fo:
+        full_input = json.load(fo)
+
+bid_info = full_input["requests"][0]
+if "bid" in bid_info and len(full_input["requests"]) == 1:
+    printBid(bid_info["own"], bid_info["bid"])
+    exit(0)
+
+if "bid" in bid_info and len(full_input["requests"]) > 1:
+    user_info = full_input["requests"][1]
+    my_history = full_input["responses"][1:]
+    others_history = full_input["requests"][2:]
+else:
+    user_info = bid_info
+    my_history = full_input["responses"]
+    others_history = full_input["requests"][1:]
+
+# 手牌，公共牌，地主位置，当前我的bot位置，最终叫牌底分
+poker, publiccard, landlordPos, currBotPos, finalBid = user_info["own"], \
+    user_info["publiccard"], user_info["landlord"], user_info["pos"], user_info["finalbid"]
+if landlordPos == currBotPos:
+    poker.extend(publiccard)
+    currBotID = 0
+else:
+    if currBotPos < landlordPos:
+        currBotID = int(currBotPos+3-landlordPos)
+    else:
+        currBotID = int(currBotPos-landlordPos)
+
+history = user_info["history"]
+last_history = full_input["requests"][-1]["history"]
+
+start = (landlordPos + 3 - currBotPos) % 3
+#print(start)
+#print(history)
+
+history = history[(2 - currBotID):]
+
+
+
+for i in range(len(my_history)):
+    #print('m',my_history[i])
+    #print('o',others_history[i]["history"])
+    history.append(my_history[i])
+    history += others_history[i]["history"]
+
+lenHistory = len(history)
+
+
+for tmp in my_history:
+    for j in tmp:
+        poker.remove(j)
+poker.sort() # 用0-53编号的牌
+
+
+
+#print(history)
 
 
 #f = open(os.path.join('logs.txt'),'a')
@@ -112,7 +224,7 @@ if Forcemove:
 #f.write(f'Forcemove:  {Forcemove}\n')
 #f.close()
 
-
+#print(torch_hist)
 
 r2c_base = {0:'3',
        1:'4',
@@ -567,10 +679,7 @@ acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
 #logging.info(f'Actions: {len(acts)}\n')
 
 # directly pass if acts only include pass
-
-Force_eval = True
-# eval anyway
-if len(acts) <= 1 and acts[0][0] == '' and not Force_eval:
+if len(acts) <= 1 and acts[0][0] == '':
     cardlist = []
     print(json.dumps({
         "response": cardlist
@@ -740,7 +849,7 @@ else:
     best_act = acts[torch.argmax(output)]
 
     #logging.info(f'Suggest: {best_act}')
-
+    #print(best_act[0])
     cards = best_act[0]
     cardlist = []
     for c in cards:
@@ -749,8 +858,8 @@ else:
             weights = [0,0,0,0]
             cards = [i for i in range(r,r+4)]
             for x in range(4):
-                if r+x not in cardlist and r+x in use_info["own"]:
-                    if r+x in use_info["publiccard"]:
+                if r+x not in cardlist and r+x in user_info["own"]:
+                    if r+x in user_info["publiccard"]:
                         weights[x] = 10
                     else:
                         weights[x] = 1
@@ -767,7 +876,6 @@ else:
     #logging.info(f'suggest cards: {cardlist} from {use_info["own"]}\n')
     cardlist.sort()
     print(json.dumps({
-            "response": cardlist,
-            "debug": f'Current WR: {str(round(Q.item()*100,2)).zfill(6)}%'
+            "response": cardlist
         }))
 

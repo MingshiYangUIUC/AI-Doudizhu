@@ -328,8 +328,8 @@ if __name__ == '__main__':
         # SL part
         if args.savedata: # save selfplay data
             note = f'{version}_{str(Total_episodes).zfill(10)}'
-            torch.save(SL_X.clone().to(torch.int8), f'SL_X_int8_{note}.pt')
-            torch.save(SL_Y.clone().to(torch.int8), f'SL_Y_int8_{note}.pt')
+            torch.save(SL_X.clone().to(torch.int8), os.path.join(wd,'train',f'SL_X_int8_{note}.pt'))
+            torch.save(SL_Y.clone().to(torch.int8), os.path.join(wd,'train',f'SL_Y_int8_{note}.pt'))
 
         #train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
         train_dataset = TensorDataset(SL_X, SL_Y)
@@ -347,8 +347,9 @@ if __name__ == '__main__':
         if args.savedata: # save selfplay data
             note = f'{version}_{str(Total_episodes).zfill(10)}'
             # no need to save X_full, since X_full is constructed by [SL_X[:,:8,0], SL_y_hat, lstm_out_hat]
-            # torch.save(X_full[:,:-args.m_par0].clone().to(torch.int8), f'QV_X-nolstm_int8_{note}.pt')
-            torch.save(Y_full.clone().to(torch.int8), f'QV_Y_int8_{note}.pt')
+            # just save the action
+            torch.save(X_full[:,-15:].clone().to(torch.int8), os.path.join(wd,'train',f'QV_X-action_int8_{note}.pt'))
+            torch.save(Y_full.clone().to(torch.int8), os.path.join(wd,'train',f'QV_Y_int8_{note}.pt'))
         
         #train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
         train_dataset = TensorDataset(X_full, Y_full)
