@@ -814,6 +814,24 @@ def init_game_3card_bombmode(strength=200):
 # Example of using the function
 Label = ['Landlord','Farmer-0','Farmer-1']
 
+# Botzone weights: 0.5*real weight
+def act2score(opinfo): # depends on type of action
+    if opinfo[0] == 1:
+        return 0.005 # 1.0 * 0.01 * 0.5 as in 0-1 Q value system
+    elif opinfo[0] == 2:
+        return 0.01
+    elif opinfo[0] in (3,5,6):
+        return 0.02
+    elif opinfo[0] in (9,10):
+        return 0.03
+    elif opinfo[0] in (7,8,11,12,13):
+        return 0.04
+    elif opinfo[0] == 4:
+        if opinfo[1] == 13:
+            return 0.64
+        else:
+            return 0.05
+
 if __name__ == '__main__':
 
     #L, U, D, B = init_game_3card_bombmode(strength=500)

@@ -33,6 +33,30 @@ def set_seed(seed):
     # Set the seed for Python random module
     random.seed(seed)
 
+def train_model_onehead(device, model, criterion, loader, nep, optimizer):
+    #scaler = torch.cuda.amp.GradScaler()
+    model.to(device)
+    model.train()  # Set the model to training mode
+    for epoch in range(nep):
+        running_loss = 0.0
+        
+        for inputs, targets in tqdm(loader):
+            if inputs.size(0) > 1:
+                inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+                
+                outputs = model(inputs)[0]  # Forward pass
+                loss = criterion(outputs, targets)  # Calculate loss
+                loss.backward()  # Backward pass
+                optimizer.step()  # Optimize
+                optimizer.zero_grad()  # Zero the gradients
+                
+                running_loss += loss.item()
+        
+        # Calculate the average loss per batch over the epoch
+        epoch_loss = running_loss / len(loader)
+        print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
+    return model, epoch_loss
+
 def train_model(device, model, criterion, loader, nep, optimizer):
     #scaler = torch.cuda.amp.GradScaler()
     model.to(device)
@@ -56,30 +80,6 @@ def train_model(device, model, criterion, loader, nep, optimizer):
         epoch_loss = running_loss / len(loader)
         print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
     return model, epoch_loss
-
-
-def train_model_amp(device, model, criterion, loader, nep, optimizer):
-    scaler = torch.cuda.amp.GradScaler(init_scale=65536.0, growth_factor=2.0, backoff_factor=0.5)
-    model.to(device)
-    model.train()
-    for epoch in range(nep):
-        running_loss = 0.0
-        for inputs, targets in tqdm(loader):
-            inputs, targets = inputs.to(device), targets.to(device)
-            optimizer.zero_grad()
-            with torch.cuda.amp.autocast(dtype=torch.float16):
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            running_loss += loss.item()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        epoch_loss = running_loss / len(loader)
-        print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
-    return model
-
 
 #@profile
 def worker(task_params):
@@ -128,6 +128,7 @@ def parse_args():
     parser.add_argument('-t', '--train', type=int, default=10000, help="Task episode number")
     parser.add_argument('-q', '--query', action='store_true', help="Query status mode: return most recent model version")
     parser.add_argument('-l', '--logging', action='store_true', help="Log training status")
+    parser.add_argument('-s', '--savedata', action='store_true', help="Store selfplay data to disk ./train")
 
     # model arguments
     parser.add_argument('--version', type=str, default='V2_2.2', help="Version of the model")
@@ -152,11 +153,12 @@ def parse_args():
     parser.add_argument('--lr1', type=float, default=0.000005/64*256, help="Scaled Learning rate for model part 1")
     parser.add_argument('--lr2', type=float, default=0.000003/64*256, help="Scaled Learning rate for model part 2")
     parser.add_argument('--l2_reg_strength', type=float, default=1e-6, help="L2 regularization strength")
+    parser.add_argument('--dropout', type=float, default=0.5, help="Dropout rate")
     parser.add_argument('--rand_param', type=float, default=0.01, help="Random parameter for action selection")
     parser.add_argument('--bomb_chance', type=float, default=0.01, help="Chance of getting a deck full of bombs during selfplay")
     
     # Add an argument for config file
-    parser.add_argument('--config', type=str, help="Path to configuration file (relative)")
+    parser.add_argument('--config', type=str, default='.config.ini', help="Path to configuration file (relative)")
 
     args = parser.parse_args()
 
@@ -171,7 +173,7 @@ def parse_args():
             for key in vars(args):
                 if key in config['TRAIN']:
                     config_value = config['TRAIN'][key]
-                    if key == 'auto' or key == 'query' or key == 'logging':
+                    if key == 'auto' or key == 'query' or key == 'logging' or key == 'savedata':
                         # Convert 'true'/'false' strings to boolean values
                         setattr(args, key, config_value.lower() == 'true')
                     else:
@@ -182,12 +184,17 @@ def parse_args():
 if __name__ == '__main__':
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
-    mp.set_sharing_strategy('file_system')
+    #mp.set_sharing_strategy('file_system')
 
     args = parse_args()
 
     device = 'cpu'
     selfplay_device = 'cuda'
+
+    if args.savedata: # create directory if necessary
+        if not os.path.isdir(os.path.join(wd,'train')):
+            os.mkdir(os.path.join(wd,'train'))
+            print('Created directory ./train to store data')
 
     selfplay_device = args.selfplay_device
     selfplay_batch_size = args.selfplay_batch_size
@@ -249,14 +256,18 @@ if __name__ == '__main__':
         f.write(f'Model init seed: {args.m_seed}\n')
         f.close()
     
-    SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
-    QV = Network_Qv_Universal_V1_1_BN(6,15,args.m_par2)
+    #SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
+    #QV = Network_Qv_Universal_V1_1_BN(6,15,args.m_par2)
+
+    SLM = Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
+    QV = Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout) # action, lastmove, upper-lower state, action
 
     # reset seed to random after initialization
     set_seed(random_seed)
 
     print('Init wt',SLM.fc2.weight.data[0].mean().item())
 
+    migrate = True
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
         QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))
@@ -315,11 +326,16 @@ if __name__ == '__main__':
         print(SL_X.shape,SL_Y.shape)
 
         # SL part
+        if args.savedata: # save selfplay data
+            note = f'{version}_{str(Total_episodes).zfill(10)}'
+            torch.save(SL_X.clone().to(torch.int8), os.path.join(wd,'train',f'SL_X_int8_{note}.pt'))
+            torch.save(SL_Y.clone().to(torch.int8), os.path.join(wd,'train',f'SL_Y_int8_{note}.pt'))
+
         #train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
         train_dataset = TensorDataset(SL_X, SL_Y)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
         opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
-        SLM, slm_loss = train_model('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
+        SLM, slm_loss = train_model_onehead('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         SLM.to(device)
         print('Sample wt SL',SLM.fc2.weight.data[0].mean().item())
 
@@ -328,6 +344,13 @@ if __name__ == '__main__':
         Y_full = torch.cat([torch.concat(list(Ybuffer[i])) for i in range(3)]).unsqueeze(1)
         print(X_full.shape,Y_full.shape)
 
+        if args.savedata: # save selfplay data
+            note = f'{version}_{str(Total_episodes).zfill(10)}'
+            # no need to save X_full, since X_full is constructed by [SL_X[:,:8,0], SL_y_hat, lstm_out_hat]
+            # just save the action
+            torch.save(X_full[:,-15:].clone().to(torch.int8), os.path.join(wd,'train',f'QV_X-action_int8_{note}.pt'))
+            torch.save(Y_full.clone().to(torch.int8), os.path.join(wd,'train',f'QV_Y_int8_{note}.pt'))
+        
         #train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
         train_dataset = TensorDataset(X_full, Y_full)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
@@ -353,9 +376,10 @@ if __name__ == '__main__':
             f = open(os.path.join(wd,'logs',f'training_stat_{version}.txt'),'a')
             # episodes, game stats, train error, 
             f.write(f'Training phase done at UTC {datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")}\n')
-            f.write(f'Simulated Episodes: {Total_episodes}\n')
+            f.write(f'Simulated Episodes: {Total_episodes}; N rows: {SL_Y.shape[0]}\n')
             roundstat = np.round((STAT/n_episodes)*100,4)
             f.write(f'Player status L F0 F1: {roundstat[0]}, {roundstat[1]}, {roundstat[2]}\n')
+            f.write(f'Hyperparameters: batchsize={args.batch_size}, lr1={LR1}, lr2={LR2}, nep={args.n_epoch}, l2={args.l2_reg_strength}, dropout={args.dropout}, rand={args.rand_param}, bomb={args.bomb_chance}\n')
             f.write(f'Model losses SLM QV: {slm_loss}, {qv_loss}\n')
             f.close()
 

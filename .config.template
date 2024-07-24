@@ -11,7 +11,7 @@
 auto = True
 
 ; Task episode number
-train = 10000
+train = 50000000
 
 ; Query status mode: return most recent model version
 query = False
@@ -23,7 +23,8 @@ logging = True
 ; Model Arguments
 
 ; Version of the model
-version = VBx5_128-128-128_0.01_0.0001-0.0001_256
+; version = V2_2.4_1024-512-1024_ep1_bs64_lr1e-5_rnd1e-2
+version = V2_3.0
 
 ; Number of historic moves in model input
 n_history = 15
@@ -32,13 +33,13 @@ n_history = 15
 n_feature = 7
 
 ; Model parameter 0: SLM LSTM
-m_par0 = 128
+m_par0 = 256
 
 ; Model parameter 1: SLM MLP
-m_par1 = 128
+m_par1 = 512
 
 ; Model parameter 2: QV MLP
-m_par2 = 128
+m_par2 = 512
 
 ; Model init seed
 m_seed = 20010101
@@ -47,16 +48,16 @@ m_seed = 20010101
 ; Environment Arguments
 
 ; Device for selfplay games
-selfplay_device = cpu
+selfplay_device = cuda
 
 ; Number of games to be played before each round of saving
-n_save = 5000
+n_save = 500000
 
 ; Number of CPU processes used in selfplay
 n_processes = 12
 
 ; Batch number of concurrent games send to GPU by each process
-selfplay_batch_size = 64
+selfplay_batch_size = 256
 
 ; num_workers in data loader
 n_worker = 0
@@ -65,28 +66,32 @@ n_worker = 0
 ; Hyperparameters
 
 ; Batch size for training
-batch_size = 256
+batch_size = 128
 
 ; Number of games to be played before each round of training
-n_episodes = 5000
+n_episodes = 20000
 
 ; Number of epochs for training
 n_epoch = 1
 
 ; Scaled (batch_size=64) Learning rate for model part 1
-lr1 = 0.0001
+lr1 = 0.00001
 
 ; Scaled (batch_size=64) Learning rate for model part 2
-lr2 = 0.0001
+lr2 = 0.00001
 
 ; L2 regularization strength
 l2_reg_strength = 1e-06
+
+; Dropout rate
+dropout = 0.1
 
 ; Random parameter for action selection
 rand_param = 0.01
 
 ; Chance of getting a deck full of bombs during selfplay
-bomb_chance = 0.01
+bomb_chance = 0.00
+
 
 
 
@@ -97,10 +102,10 @@ bomb_chance = 0.01
 
 ; Version of gating model
 ; v_gate = H15-V2_2.3
-v_gate = H15-V2_2.3
+v_gate = H15-V2_3.0
 
 ; Model parameter 0: SLM LSTM
-mg_par0 = 512
+mg_par0 = 256
 
 ; Model parameter 1: SLM MLP
 mg_par1 = 512
@@ -109,14 +114,14 @@ mg_par1 = 512
 mg_par2 = 512
 
 ; Iteration number of gating model
-i_gate = 160000000
+i_gate = 40000000
 
 ; Version of model series
 ; v_series = H15-V2_2.3
-v_series = H15-V2_2.3
+v_series = H15-V2_3.0
 
 ; Model parameter 0: SLM LSTM
-ms_par0 = 512
+ms_par0 = 256
 
 ; Model parameter 1: SLM MLP
 ms_par1 = 512
@@ -125,19 +130,57 @@ ms_par1 = 512
 ms_par2 = 512
 
 ; Start iteration number
-i_start = 10000000
+i_start = 5000000
 
 ; Stop iteration number (inclusive)
-i_stop = 160000000
+i_stop = 45000000
 
 ; Iteration number step
-i_step = 10000000
+i_step = 5000000
 
 ; Number of games per dual
-n_game = 2000
+n_game = 500
 
 ; Max number of CPU processes used in selfplay, could be lower if there are not enough tasks
-n_processes = 12
+n_processes = 4
 
 ; Batch number of concurrent games send to GPU by each process
 selfplay_batch_size = 128
+
+
+
+
+[PVC]
+
+
+; PVC arguments
+
+; Version of model
+version = H15-V2_3.0
+
+; Model parameter 0: SLM LSTM
+m_par0 = 256
+
+; Model parameter 1: SLM MLP
+m_par1 = 512
+
+; Model parameter 2: QV MLP
+m_par2 = 512
+
+; Enable automatic mode: three AI playing and you just spectate one of them.
+automatic = False
+
+; Enable bomb mode: players are more likely to get bombs.
+bombmode = False
+
+; Show all statistics regardless of game mode.
+showall = True
+
+; Role number. -1: random, 0: Landlord, 1: Farmer-0, 2: Farmer-1. 
+role = 0
+
+; Softmax temperature: randomness of AI actions (float >= 0)
+temperature = 0.0
+
+; seed
+seed = -87184777
