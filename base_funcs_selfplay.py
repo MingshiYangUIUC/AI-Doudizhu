@@ -197,6 +197,12 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 qa = distribution.sample()
                 best_act = acts[qa]
             
+            # add a early terminate to find better samples
+            if Turn[_] < 3 and (qa < 0.05 or qa > 0.95) and random.uniform(0,1) > 0.75:
+                Active[_] = False
+                processed -= 1
+                continue
+
             #print(torch.argmax(output))
             action = best_act
             

@@ -130,18 +130,13 @@ if __name__ == '__main__':
         
         else:
             version = args.v_gate
-            try: 
-                SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
-                QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.mg_par2)
 
-                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
-            except:
-                SLM = Network_Pcard_V2_1(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=1024)
-                QV = Network_Qv_Universal_V1_1(6,15,1024)
+            SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
+            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2)
 
-                SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
+            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            
         
         SLM.eval()
         QV.eval()

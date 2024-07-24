@@ -267,7 +267,7 @@ if __name__ == '__main__':
 
     print('Init wt',SLM.fc2.weight.data[0].mean().item())
 
-    migrate = False
+    migrate = True
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
         QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))

@@ -382,6 +382,9 @@ def main():
     parser.add_argument("-tp", "--thinkplayer", type=str, default='012', help="The player who thinks (string containing 012)")
     parser.add_argument("-rp", "--riskpenalty", type=float, default=0.0,help="AI risk penalty (float >= 0)")
     parser.add_argument("-s", "--seed", type=int, default=random.randint(-2**32, 2**32-1), help="Game Seed (int)")
+    parser.add_argument('--m_par0', type=int, default=512, help="Model parameter 0: SLM LSTM")
+    parser.add_argument('--m_par1', type=int, default=512, help="Model parameter 1: SLM MLP")
+    parser.add_argument('--m_par2', type=int, default=512, help="Model parameter 2: QV MLP")
 
     # Add an argument for config file
     parser.add_argument('--config', type=str, default='.config.ini', help="Path to configuration file (relative)")
@@ -470,8 +473,8 @@ if __name__ == '__main__':
     print('Model version:', v_M)
     
 
-    SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=256, hiddensize=512)
-    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,256,512)
+    SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
+    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2)
 
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))
