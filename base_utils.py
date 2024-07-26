@@ -828,9 +828,11 @@ def act2score(opinfo): # depends on type of action
         return 0.04
     elif opinfo[0] == 4:
         if opinfo[1] == 13:
-            return 0.64
+            return 0.064
         else:
             return 0.05
+    else:
+        return 0.00
 
 if __name__ == '__main__':
 

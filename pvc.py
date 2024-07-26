@@ -147,6 +147,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
     Qs = []
     Q0 = []
 
+    scores = np.zeros(3)
     signs = ['-','+']
 
     unavail = torch.zeros(15)
@@ -245,6 +246,8 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         if Forcemove:
             Forcemove = False
 
+        scores[Turn%3] += act2score(action[1])
+
         # conduct a move
         '''myst = state2str(player.sum(dim=0).numpy())
         cA = Counter(myst)
@@ -319,6 +322,11 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         time.sleep(max(pause - (time.time()-ts),0))
 
         if newst.max() == 0:
+            if Turn % 3 == 0:
+                scores[0] += 1
+            else:
+                scores[1] += 1
+                scores[2] += 1
             break
 
         Turn += 1
@@ -339,6 +347,8 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             print(f'\nLandlord Wins')
         else:
             print(f'\nFarmers Win')
+        scores = np.round(scores,4)
+        print(f'\n Scores: Landlord {scores[0]} | Farmer-0 {scores[1]} | Farmer-1 {scores[2]}.')
         print('\nCards Remaining:')
         print(''.join([Label[i]+'        '+state2str_1D(p).zfill(20).replace('0',' ')+'\n' for i,p in enumerate(Init_states[:-1]) if i != Turn%3]))
         if (not automatic) or showall:
@@ -472,9 +482,13 @@ if __name__ == '__main__':
     #v_M = 'H15-V2_1.2-Contester_0022600000'
     print('Model version:', v_M)
     
+    if 'Bz' in v_M:
+        q_scale = 1.2
+    else:
+        q_scale = 1.0
 
     SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
-    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2)
+    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2,0.0,q_scale)
 
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))

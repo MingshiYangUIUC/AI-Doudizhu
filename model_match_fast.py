@@ -122,17 +122,24 @@ if __name__ == '__main__':
     for i, session in enumerate(players):
         if session != players[-1] or i != len(players)-1:
             version = args.v_series
+            if 'Bz' in version:
+                q_scale = 1.2
+            else:
+                q_scale = 1.0
             SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
-            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.ms_par2)
+            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
             QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
         
         else:
             version = args.v_gate
-
+            if 'Bz' in version:
+                q_scale = 1.2
+            else:
+                q_scale = 1.0
             SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
-            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2)
+            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2,0.0,q_scale)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
             QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))

@@ -258,9 +258,15 @@ if __name__ == '__main__':
     
     #SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
     #QV = Network_Qv_Universal_V1_1_BN(6,15,args.m_par2)
-
+    if 'Bz' in version:
+        q_scale = 1.2
+    else:
+        q_scale = 1.0
     SLM = Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
-    QV = Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout) # action, lastmove, upper-lower state, action
+    QV = Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+
+    if (QV.scale != 1):
+        print('Bz version.')
 
     # reset seed to random after initialization
     set_seed(random_seed)
