@@ -24,6 +24,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
         Models[-1].to(dtypem).to(selfplay_device) # QM
     else:
         dtypem = torch.float32
+    
+    Bz = (Models[-1].scale != 1)
 
     Index = np.arange(ngame)
     Active = [True for _ in range(ngame)]
@@ -48,7 +50,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     Forcemove = [True for _ in range(ngame)] # whether pass is not allowed
 
     BufferStatesActs = [[[],[],[]] for _ in range(ngame)] # states_actions for 3 players
-    BufferRewards = [[-1,-1,-1] for _ in range(ngame)] # rewards for 3 players
+    BufferRewards = [[0,0,0] for _ in range(ngame)] # rewards for 3 players
 
     #Full_output = []
     
@@ -205,6 +207,10 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
             #print(torch.argmax(output))
             action = best_act
+
+            if Bz:
+                score = act2score(action[1])
+                BufferRewards[_][Tidx] += score
             
             if Forcemove[_]:
                 Forcemove[_] = False
@@ -249,19 +255,19 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             lastmove[_] = newlast[_]
 
             if newst.max() == 0:
-                BufferRewards[_][Tidx] = 1 #[torch.as_tensor(BufferRewards[_][Tidx],dtype=torch.float32)+1]
+                BufferRewards[_][Tidx] += 1 #[torch.as_tensor(BufferRewards[_][Tidx],dtype=torch.float32)+1]
                 if Tidx == 1:
                     stat[1] += 1
-                    BufferRewards[_][Tidx+1] = 1 #[torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)+1]
-                    BufferRewards[_][Tidx-1] = 0 #[torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)]
+                    BufferRewards[_][Tidx+1] += 1 #[torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)+1]
+                    #BufferRewards[_][Tidx-1] += 0 #[torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)]
                 elif Tidx == 2:
                     stat[2] += 1
-                    BufferRewards[_][Tidx-1] = 1 #[torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)+1]
-                    BufferRewards[_][Tidx-2] = 0 #[torch.as_tensor(BufferRewards[_][Tidx-2],dtype=torch.float32)]
+                    BufferRewards[_][Tidx-1] += 1 #[torch.as_tensor(BufferRewards[_][Tidx-1],dtype=torch.float32)+1]
+                    #BufferRewards[_][Tidx-2] += 0 #[torch.as_tensor(BufferRewards[_][Tidx-2],dtype=torch.float32)]
                 elif Tidx == 0:
                     stat[0] += 1
-                    BufferRewards[_][Tidx+1] = 0 #[torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)]
-                    BufferRewards[_][Tidx+2] = 0 #[torch.as_tensor(BufferRewards[_][Tidx+2],dtype=torch.float32)]
+                    #BufferRewards[_][Tidx+1] += 0 #[torch.as_tensor(BufferRewards[_][Tidx+1],dtype=torch.float32)]
+                    #BufferRewards[_][Tidx+2] += 0 #[torch.as_tensor(BufferRewards[_][Tidx+2],dtype=torch.float32)]
                 
                 Active[_] = False
 
@@ -295,7 +301,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             if processed < ntask and not Active[_] and Turn[_]%3 == 0: # landlord turn, new game
                 # clear buffer
                 BufferStatesActs[_] = [[],[],[]]
-                BufferRewards[_] = [-1,-1,-1]
+                BufferRewards[_] = [0,0,0]
 
                 # reset game
                 Active[_] = True
@@ -570,7 +576,7 @@ if __name__ == '__main__':
 
     #SLM = Network_Pcard_V2_1_Trans(15+7, 7, y=1, x=15, trans_heads=4, trans_layers=6, hiddensize=512)
     SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512, dropout_rate = 0.2)
-    QV = Network_Qv_Universal_V1_2_BN_dropout(input_size=11*15,lstmsize=512, hsize=512, dropout_rate = 0.2)
+    QV = Network_Qv_Universal_V1_2_BN_dropout(input_size=11*15,lstmsize=512, hsize=512, dropout_rate = 0.2, scale_factor=1.2,offset_factor=0.0)
     #SLM.load_state_dict(torch.load(os.path.join(wd,'models','SLM_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
     #QV.load_state_dict(torch.load(os.path.join(wd,'models','QV_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
     #quit()
@@ -582,8 +588,8 @@ if __name__ == '__main__':
     #torch.save(SLM.state_dict(),os.path.join(wd,'test_models',f'SLM_Trans.pt'))
     #torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_Trans.pt'))
 
-    N_episodes = 512
-    ng = 128
+    N_episodes = 128
+    ng = 32
     
     seed = random.randint(0,1000000000)
     seed = 12333
@@ -597,12 +603,16 @@ if __name__ == '__main__':
             out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cpu', Nhistory=15, ngame=ng, ntask=N_episodes,bombchance=0.0,
                                             bs_max=64)
             print(out[-1])
+            from matplotlib import pyplot as plt
+            #print(list(out[1][0].numpy()))
+            plt.hist(out[1][1].numpy(),bins=100)
+            plt.show()
 
     max_memory_used = torch.cuda.max_memory_allocated('cuda')
-    print(f"Maximum memory used by the model: {max_memory_used / (1024 ** 2)} MB")
+    #print(f"Maximum memory used by the model: {max_memory_used / (1024 ** 2)} MB")
 
     # You can also get a detailed memory summary
-    print(torch.cuda.memory_summary('cuda'))
+    #print(torch.cuda.memory_summary('cuda'))
     
     '''gatingresult = gating_batchpool(models, 0, 'cuda', Nhistory=15, ngame=ng, ntask=N_episodes, rseed=seed)
     print('')

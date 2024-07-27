@@ -649,12 +649,12 @@ else:
             return x, lstm_out
 
     class Network_Qv_Universal_V1_2_BN_dropout(nn.Module): # this network uses estimated state to estimate q values of action
-                                # use 3 states (SELF, UPPER, LOWER), 1 role, and 1 action (Nelems) (z=5)
-                                # cound use more features such as history
-                                # should be simpler
-                                # use lstm and Bigstate altogether
+                               # use 3 states (SELF, UPPER, LOWER), 1 role, and 1 action (Nelems) (z=5)
+                               # cound use more features such as history
+                               # should be simpler
+                               # use lstm and Bigstate altogether
 
-        def __init__(self, input_size, lstmsize, hsize=256, dropout_rate=0.5):
+        def __init__(self, input_size, lstmsize, hsize=256, dropout_rate=0.5, scale_factor=1.0, offset_factor=0.0):
             super(Network_Qv_Universal_V1_2_BN_dropout, self).__init__()
 
             hidden_size = hsize
@@ -669,6 +669,8 @@ else:
             self.fc4 = nn.Linear(hidden_size, hidden_size)
             self.fc5 = nn.Linear(hidden_size, 1) # output is q values
             self.flatten = nn.Flatten()
+            self.scale = scale_factor
+            self.offset = offset_factor
 
         def forward(self, x):
 
@@ -692,19 +694,33 @@ else:
             x = x + x1
 
             x = torch.sigmoid(self.fc5(x))
+
+            x = x * self.scale + self.offset
             return x
 
-    SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=256, hiddensize=512)
-    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,256,512)
-
+    
     try:
         data_dir = os.path.join(os.getcwd(), 'data')
-        SLM.load_state_dict(torch.load(os.path.join(data_dir,f'SLM_H15-V2_3.0_best.pt')))
-        QV.load_state_dict(torch.load(os.path.join(data_dir,f'QV_H15-V2_3.0_best.pt')))
+        SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=256, hiddensize=512)
+        QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,256,512,0.0,1.2)
+        SLM.load_state_dict(torch.load(os.path.join(data_dir,f'SLM_H15-V2_3.0Bz_best.pt')))
+        QV.load_state_dict(torch.load(os.path.join(data_dir,f'QV_H15-V2_3.0Bz_best.pt')))
+
     except:
-        data_dir = os.path.join(os.getcwd(), 'data')
-        SLM.load_state_dict(torch.load(os.path.join(data_dir,f'SLM_H15-V2_3.0_0100000000.pt')))
-        QV.load_state_dict(torch.load(os.path.join(data_dir,f'QV_H15-V2_3.0_0100000000.pt')))
+
+        try:
+            data_dir = os.path.join(os.getcwd(), 'data')
+            SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=256, hiddensize=512)
+            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,256,512)
+            SLM.load_state_dict(torch.load(os.path.join(data_dir,f'SLM_H15-V2_3.0_best.pt')))
+            QV.load_state_dict(torch.load(os.path.join(data_dir,f'QV_H15-V2_3.0_best.pt')))
+
+        except:
+            data_dir = os.path.join(os.getcwd(), 'data')
+            SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=256, hiddensize=512)
+            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,256,512)
+            SLM.load_state_dict(torch.load(os.path.join(data_dir,f'SLM_H15-V2_3.0_0100000000.pt')))
+            QV.load_state_dict(torch.load(os.path.join(data_dir,f'QV_H15-V2_3.0_0100000000.pt')))
 
     SLM.eval()
     QV.eval()

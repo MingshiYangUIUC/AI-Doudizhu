@@ -290,7 +290,7 @@ class Network_Qv_Universal_V1_2_BN_dropout(nn.Module): # this network uses estim
                                # should be simpler
                                # use lstm and Bigstate altogether
 
-    def __init__(self, input_size, lstmsize, hsize=256, dropout_rate=0.5):
+    def __init__(self, input_size, lstmsize, hsize=256, dropout_rate=0.5, scale_factor=1.0, offset_factor=0.0):
         super(Network_Qv_Universal_V1_2_BN_dropout, self).__init__()
 
         hidden_size = hsize
@@ -305,6 +305,8 @@ class Network_Qv_Universal_V1_2_BN_dropout(nn.Module): # this network uses estim
         self.fc4 = nn.Linear(hidden_size, hidden_size)
         self.fc5 = nn.Linear(hidden_size, 1) # output is q values
         self.flatten = nn.Flatten()
+        self.scale = scale_factor
+        self.offset = offset_factor
 
     def forward(self, x):
 
@@ -328,6 +330,8 @@ class Network_Qv_Universal_V1_2_BN_dropout(nn.Module): # this network uses estim
         x = x + x1
 
         x = torch.sigmoid(self.fc5(x))
+
+        x = x * self.scale + self.offset
         return x
 
 # wrapper functions for the models defined above
