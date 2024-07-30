@@ -1,3 +1,13 @@
+"""
+
+A botzone agent that plays Doudizhu.
+
+Reads json input from Botzone, recreates game state, searches actions using python, evaluates them using pretrained network, and returns an action to be read by Botzone.
+Models are redefined here to make this script stand alone.
+    Note that the rule of getting action does not exactly match that in 'base_utils.py'.
+
+"""
+
 import random
 import math
 import json

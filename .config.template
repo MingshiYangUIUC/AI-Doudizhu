@@ -2,28 +2,33 @@
 
 
 
+
 [TRAIN]
+; Used by train_main.py
 
-
-; Master Arguments
+; Master Arguments about Training
 
 ; Auto train mode: continue iterating for task episode number
 auto = True
 
-; Task episode number
+; Task episode number: selfplay and train until this number of games are played
 train = 50000000
 
-; Query status mode: return most recent model version
+; Query status mode: return most recent model version and do not train
 query = False
 
-; Log training status
+; Log training status: save training log to a txt file
+; A log includes time, number of games, selfplay statistics, number of timesteps, hyperparameters, and mode losses.
 logging = True
+
+; Save training data? [for transfer learning. 1: gather SL_X, SL_Y, QV_Y. 2: train SLM. 3: SL_X+SL_y_hat = QV_x_hat. 4: train QV]
+; FYI: Transfer learning does not seem to create strong enough model, so no code is provided to TL
+savedata = False
 
 
 ; Model Arguments
 
-; Version of the model
-; version = V2_2.4_1024-512-1024_ep1_bs64_lr1e-5_rnd1e-2
+; Version of the model, will create new model if does not exist
 version = V2_3.0
 
 ; Number of historic moves in model input
@@ -32,25 +37,25 @@ n_history = 15
 ; Additional feature size of the model
 n_feature = 7
 
-; Model parameter 0: SLM LSTM
+; Model parameter 0: SLM LSTM hidden layer size
 m_par0 = 256
 
-; Model parameter 1: SLM MLP
+; Model parameter 1: SLM MLP hidden layer size
 m_par1 = 512
 
-; Model parameter 2: QV MLP
+; Model parameter 2: QV MLP hidden layer size
 m_par2 = 512
 
-; Model init seed
+; Model init seed: random seed for model initialization, this is default value lol
 m_seed = 20010101
 
 
 ; Environment Arguments
 
-; Device for selfplay games
+; Device for selfplay games: cpu or cuda gpu
 selfplay_device = cuda
 
-; Number of games to be played before each round of saving
+; Number of games to be played before each round of saving: save when # of episodes % n_save == 0
 n_save = 500000
 
 ; Number of CPU processes used in selfplay
@@ -68,95 +73,100 @@ n_worker = 0
 ; Batch size for training
 batch_size = 128
 
-; Number of games to be played before each round of training
+; Number of games to be played before each round of training: play this many games to generate training data
 n_episodes = 20000
 
-; Number of epochs for training
+; Number of epochs for training. 1 to prevent overfeet
 n_epoch = 1
 
-; Scaled (batch_size=64) Learning rate for model part 1
+; Scaled (batch_size=64) Learning rate for model part 1 (typically decay to 0.0000001)
+; true lr = batch_size / 64 * lr1
 lr1 = 0.00001
 
 ; Scaled (batch_size=64) Learning rate for model part 2
+; true lr = batch_size / 64 * lr2
 lr2 = 0.00001
 
 ; L2 regularization strength
-l2_reg_strength = 1e-06
+l2_reg_strength = 1e-10
 
 ; Dropout rate
 dropout = 0.1
 
-; Random parameter for action selection
+; Random parameter for action selection (>=0). p(action) = softmax( Q(action) / rand_param )
 rand_param = 0.01
 
-; Chance of getting a deck full of bombs during selfplay
+; Chance of getting a deck full of bombs during selfplay (0-1)
+; change this to high value for fun
 bomb_chance = 0.00
 
 
 
 
 [MATCH]
-
+; used by model_match_fast.py
 
 ; Model match arguments
 
 ; Version of gating model
-; v_gate = H15-V2_2.3
 v_gate = H15-V2_3.0
 
-; Model parameter 0: SLM LSTM
+; Model parameter 0: SLM LSTM for gating model
 mg_par0 = 256
 
-; Model parameter 1: SLM MLP
+; Model parameter 1: SLM MLP for gating model
 mg_par1 = 512
 
-; Model parameter 2: QV MLP
+; Model parameter 2: QV MLP for gating model
 mg_par2 = 512
 
 ; Iteration number of gating model
-i_gate = 40000000
+i_gate = 
 
 ; Version of model series
-; v_series = H15-V2_2.3
-v_series = H15-V2_3.0
+v_series = H15-V2_3.0Bz
 
-; Model parameter 0: SLM LSTM
+; Model parameter 0: SLM LSTM for model series
 ms_par0 = 256
 
-; Model parameter 1: SLM MLP
+; Model parameter 1: SLM MLP for model series
 ms_par1 = 512
 
-; Model parameter 2: QV MLP
+; Model parameter 2: QV MLP for model series
 ms_par2 = 512
 
 ; Start iteration number
-i_start = 5000000
+i_start = 
 
 ; Stop iteration number (inclusive)
-i_stop = 45000000
+i_stop = 
 
-; Iteration number step
-i_step = 5000000
+; Iteration number step. In contest, model series identifiers = range(start, stop+1, step)
+i_step = 
 
-; Number of games per dual
-n_game = 500
+; Number of games per pair of model (AxB and BxA are two pairs)
+n_game = 10000
 
-; Max number of CPU processes used in selfplay, could be lower if there are not enough tasks
-n_processes = 4
+; Max number of CPU processes used in selfplay, ideally one process per task. Will be lower if there are not enough tasks
+; Total task number is 2 * number of model series.
+n_processes = 12
 
-; Batch number of concurrent games send to GPU by each process
-selfplay_batch_size = 128
+; Batch number of concurrent game states send to GPU by each process
+selfplay_batch_size = 256
+
+; Device for selfplay games / matches
+selfplay_device = cuda
 
 
 
 
 [PVC]
-
+; used by pvc.py
 
 ; PVC arguments
 
 ; Version of model
-version = H15-V2_3.0
+version = H15-V2_3.0Bz
 
 ; Model parameter 0: SLM LSTM
 m_par0 = 256
@@ -168,19 +178,26 @@ m_par1 = 512
 m_par2 = 512
 
 ; Enable automatic mode: three AI playing and you just spectate one of them.
-automatic = False
+automatic = True
 
 ; Enable bomb mode: players are more likely to get bombs.
 bombmode = False
 
-; Show all statistics regardless of game mode.
+; Show all statistics regardless of game mode. 
+; Statistics include predicted cards of other players, candidate actions and associated scores.
 showall = True
 
 ; Role number. -1: random, 0: Landlord, 1: Farmer-0, 2: Farmer-1. 
-role = 0
+role = -1
 
 ; Softmax temperature: randomness of AI actions (float >= 0)
 temperature = 0.0
 
-; seed
-seed = -87184777
+; Difficulty level as quality of initial cards. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible. empty: random
+difficulty = 
+
+; seed to initialize the game, does not work with bombmode or difficulty. empty: random
+seed = 
+
+; pausetime: manual of delay of displaying new console outputs
+pausetime = 0.1

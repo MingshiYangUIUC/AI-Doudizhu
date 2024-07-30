@@ -1,14 +1,21 @@
+"""
+
+Script used to train models. 
+
+Settings about training should be defined in 'TRAIN' section of 'config.ini'.
+
+"""
+
 import torch
 import random
 from collections import Counter
 from itertools import combinations
 import torch
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
-
-from model_utils import *
-from base_utils import *
-from base_funcs_selfplay import simEpisode_batchpool_softmax
-#from test_batch_sim import *
+import numpy as np
+import time
+import model_utils
+import base_funcs_selfplay
 
 from collections import deque
 import torch.multiprocessing as mp
@@ -90,15 +97,16 @@ def worker(task_params):
     worker_seed = int((time.time() * 1000) * os.getpid()) % (2**32)
     set_seed(worker_seed)
 
-    models, rand_param, selfplay_device, selfplay_batch_size, n_history, chunksize, ip, npr, bchance = task_params
+    models, rand_param, selfplay_device, selfplay_batch_size, n_history, chunksize, ip, npr, bchance, bs_max, ts_limit = task_params
 
     results = []
     if selfplay_device == 'cuda':
         torch.cuda.empty_cache()
     with torch.inference_mode():
-        results = simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, selfplay_batch_size, chunksize.item(), bchance)
+        results = base_funcs_selfplay.simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, selfplay_batch_size, chunksize.item(), bchance, bs_max, ts_limit)
     if selfplay_device == 'cuda':
         torch.cuda.empty_cache()
+    gc.collect()
     print(f'---------- {str(ip).zfill(2)} / {npr} END----------',end='\r')
     return results
 
@@ -142,13 +150,16 @@ def parse_args():
     # environment arguments
     parser.add_argument('--selfplay_device', type=str, default='cuda', help="Device for selfplay games")
     parser.add_argument('--n_save', type=int, default=100000, help="Number of games to be played before each round of saving")
+    parser.add_argument('--n_refresh', type=int, default=100000, help="Number of games to be played before restarting mp pool")
     parser.add_argument('--n_processes', type=int, default=14, help="Number of CPU processes used in selfplay")
     parser.add_argument('--selfplay_batch_size', type=int, default=32, help="Batch number of concurrent games send to GPU by each process")
     parser.add_argument('--n_worker', type=int, default=0, help="num_workers in data loader")
+    parser.add_argument('--max_inf_bs', type=int, default=30, help="Max true batch size send to model inference in each process")
     
     # hyperparameters
     parser.add_argument('--batch_size', type=int, default=256, help="Batch size for training")
     parser.add_argument('--n_episodes', type=int, default=25000, help="Number of games to be played before each round of training")
+    parser.add_argument('--timestep_limit', type=int, default=1000000, help="Limit this to prevent too many timesteps generated per training round")
     parser.add_argument('--n_epoch', type=int, default=1, help="Number of epochs for training")
     parser.add_argument('--lr1', type=float, default=0.000005/64*256, help="Scaled Learning rate for model part 1")
     parser.add_argument('--lr2', type=float, default=0.000003/64*256, help="Scaled Learning rate for model part 2")
@@ -241,6 +252,8 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     nepoch = args.n_epoch
     n_worker = args.n_worker
+    bs_max = args.max_inf_bs
+    ts_limit = args.timestep_limit
     LR1 = args.lr1 / 64 * batch_size
     LR2 = args.lr2 / 64 * batch_size
     l2_reg_strength = args.l2_reg_strength
@@ -262,8 +275,8 @@ if __name__ == '__main__':
         q_scale = 1.2
     else:
         q_scale = 1.0
-    SLM = Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
-    QV = Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+    SLM = model_utils.Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
+    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
 
     if (QV.scale != 1):
         print('Bz version.')
@@ -273,7 +286,7 @@ if __name__ == '__main__':
 
     print('Init wt',SLM.fc2.weight.data[0].mean().item())
 
-    migrate = True
+    migrate = False
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
         QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))
@@ -284,6 +297,11 @@ if __name__ == '__main__':
         torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
         torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
 
+
+    pool = mp.Pool(n_process)
+
+    next_eps = n_episodes
+
     while Total_episodes < Max_episodes:
 
         Xbuffer = [[],[],[]]
@@ -291,22 +309,26 @@ if __name__ == '__main__':
         SL_X = []
         SL_Y = []
         cs = 1
-        chunksizes = torch.diff(torch.torch.linspace(0,n_episodes,n_process*cs+1).type(torch.int64))
+        
+
+        chunksizes = torch.diff(torch.torch.linspace(0,next_eps,n_process*cs+1).type(torch.int64))
 
         t0 = time.time()
-        with mp.Pool(n_process) as pool:
-            print(version, 'Playing games')
-
-            SLM.eval()
-            QV.eval()
-
-            tasks = [([SLM, QV], rand_param, selfplay_device, selfplay_batch_size, n_history, chunksizes[_], _, n_process, bomb_chance) for _ in range(n_process*cs)]
-
-            results = list(pool.imap_unordered(worker, tasks, chunksize=cs))
+        #with mp.Pool(n_process) as pool:
         
-        Total_episodes += n_episodes
+        print(version, 'Playing games')
+
+        SLM.eval()
+        QV.eval()
+
+        # mp
+        tasks = [([SLM, QV], rand_param, selfplay_device, selfplay_batch_size, n_history, chunksizes[_], _, n_process, bomb_chance, bs_max, ts_limit//n_process) for _ in range(n_process*cs)]
+
+        results = list(pool.imap_unordered(worker, tasks, chunksize=cs))
+        # mp
+        
         t1 = time.time()
-        print(version, 'Played games:',Total_episodes, 'Elapsed time:', round(t1-t0))
+        
         torch.cuda.empty_cache()
         
         # End selfplay, process results
@@ -324,13 +346,21 @@ if __name__ == '__main__':
     
         del results, SAs, Rewards, sl_x, sl_y
 
+        played_eps = int(sum(STAT))
+        Total_episodes += played_eps
+        print(version, 'Played games:',Total_episodes, 'Elapsed time:', round(t1-t0))
+        print('Game Stat:',np.round((STAT/played_eps)*100,2))
+
+        if played_eps == next_eps or (Total_episodes % n_episodes) == 0:
+            next_eps = n_episodes
+        else:
+            next_eps = (n_episodes - Total_episodes) % n_episodes
+            print(f'Reached timestep limit during this round. Next round only play {next_eps} games.')
+
         SL_X = torch.cat(SL_X)
         SL_Y = torch.cat(SL_Y)
-
-        print('Game Stat:',np.round((STAT/n_episodes)*100,2))
-
         print(SL_X.shape,SL_Y.shape)
-
+        #quit()
         # SL part
         if args.savedata: # save selfplay data
             note = f'{version}_{str(Total_episodes).zfill(10)}'
@@ -344,6 +374,9 @@ if __name__ == '__main__':
         SLM, slm_loss = train_model_onehead('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         SLM.to(device)
         print('Sample wt SL',SLM.fc2.weight.data[0].mean().item())
+
+        sy_size = SL_Y.shape
+        del SL_X, SL_Y, train_dataset, train_loader
 
         # QV part
         X_full = torch.cat([torch.concat(list(Xbuffer[i])) for i in range(3)])
@@ -365,13 +398,24 @@ if __name__ == '__main__':
         QV.to(device)
         print('Sample wt QV',QV.fc2.weight.data[0].mean().item())
 
+        del X_full, Y_full, train_dataset, train_loader
+
         gc.collect()
         torch.cuda.empty_cache()
 
-        # save once every X episodes
+        # save once every X episodes, also reset pool
         if Total_episodes % Save_frequency == 0:
             torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
             torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
+            print('Saved models')
+            
+        if Total_episodes % args.n_refresh == 0:
+            if 'pool' in locals():
+                pool.terminate()
+                pool.join()
+            pool = mp.Pool(n_process)
+            print('Restarted pool')
+
 
         te = time.time()
         
@@ -382,15 +426,13 @@ if __name__ == '__main__':
             f = open(os.path.join(wd,'logs',f'training_stat_{version}.txt'),'a')
             # episodes, game stats, train error, 
             f.write(f'Training phase done at UTC {datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")}\n')
-            f.write(f'Simulated Episodes: {Total_episodes}; N rows: {SL_Y.shape[0]}\n')
-            roundstat = np.round((STAT/n_episodes)*100,4)
+            f.write(f'Simulated Episodes: {Total_episodes}; N rows: {sy_size[0]}\n')
+            roundstat = np.round((STAT/played_eps)*100,4)
             f.write(f'Player status L F0 F1: {roundstat[0]}, {roundstat[1]}, {roundstat[2]}\n')
             f.write(f'Hyperparameters: batchsize={args.batch_size}, lr1={LR1}, lr2={LR2}, nep={args.n_epoch}, l2={args.l2_reg_strength}, dropout={args.dropout}, rand={args.rand_param}, bomb={args.bomb_chance}\n')
             f.write(f'Model losses SLM QV: {slm_loss}, {qv_loss}\n')
             f.close()
 
-'''
-e:
-conda activate rl-0
-python E:\\Documents\\ddz\\train_main.py
-'''
+    if 'pool' in locals():
+        pool.terminate()
+        pool.join()

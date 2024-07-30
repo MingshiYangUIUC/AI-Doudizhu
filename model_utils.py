@@ -1,12 +1,21 @@
+"""
+
+Define pytorch neural network classes. Used by othe scripts, do not run alone.
+
+There are some legacy networks not being used anymore.
+There are helper functions that search and return an action based on given game state. Used by 'pvc.py' and 'ai_helper.py'.
+
+
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from base_utils import avail_actions_cpp, str2state, r2c_base_arr, Label
 
-# network reads in self state, played cards, historical N move, and self action
-# output one value (win rate)
 
+# old models
 
 class Network_Qv_Universal_V1_1(nn.Module): # this network uses estimated state to estimate q values of action
                                # use 3 states (SELF, UPPER, LOWER), 1 role, and 1 action (Nelems) (z=5)
@@ -48,7 +57,6 @@ class Network_Qv_Universal_V1_1(nn.Module): # this network uses estimated state 
 
         x = torch.sigmoid(self.fc5(x))
         return x
-
 
 class Network_Pcard_V2_1(nn.Module): # this network considers public cards of landlord
                                  # predict opponent states (as frequency of cards) (UPPER, LOWER)
@@ -109,6 +117,8 @@ class Network_Pcard_V2_1(nn.Module): # this network considers public cards of la
         x = torch.sigmoid(self.fc7(x))*4 # max count is 4, min count is 0
         return x
 
+
+# V2_2_2 models
 
 class Network_Pcard_V2_1_BN(nn.Module): # this network considers public cards of landlord
                                  # predict opponent states (as frequency of cards) (UPPER, LOWER)
@@ -215,6 +225,8 @@ class Network_Qv_Universal_V1_1_BN(nn.Module): # this network uses estimated sta
         x = torch.sigmoid(self.fc5(x))
         return x
 
+
+# V2_3_0 models
 
 class Network_Pcard_V2_2_BN_dropout(nn.Module): # this network considers public cards of landlord
                                  # predict opponent states (as frequency of cards) (UPPER, LOWER)

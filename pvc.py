@@ -1,13 +1,22 @@
+"""
+
+Create interactive games between human and AI in command console, or watch AI play with itself. 
+
+The model parameters and other settings should be defined in 'PVC' section of 'config.ini'.
+The model classes and inference functions are defined in 'model_utils.py'.
+Other utility functions used are defined in 'base_utils.py'
+
+"""
+
 import torch
 import random
 from collections import Counter
-
-#from base_funcs_V2 import *
-from model_utils import *
-
-from base_utils import *
-
-from rollout import *
+import model_utils
+#from base_utils import *
+import base_utils
+import numpy as np
+import time
+from rollout import get_action_adv_batch_mp
 
 from rollout_serial import get_action_adv
 
@@ -29,10 +38,10 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
     while True and i < 1000:
         i+=1
         if not bomb:
-            Init_states = init_game_3card() # [Lstate, Dstate, Ustate]
+            Init_states = base_utils.init_game_3card() # [Lstate, Dstate, Ustate]
         else:
-            Init_states = init_game_3card_bombmode(bstrength)
-        public_cards = state2str_1D(Init_states[-1].numpy())
+            Init_states = base_utils.init_game_3card_bombmode(bstrength)
+        public_cards = base_utils.state2str_1D(Init_states[-1].numpy())
 
         Deck = [i.clone().detach() for i in Init_states]
 
@@ -60,9 +69,9 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
             #print(CC)
 
             if 'V2_2' in name:
-                action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature=0)
+                action, Q = model_utils.get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature=0)
             elif 'V2_3' in name:
-                action, Q = get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature=0)
+                action, Q = model_utils.get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature=0)
             
 
             if Turn < 3:
@@ -74,7 +83,7 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
 
             # conduct a move
             # myst = state2str_1D(player)
-            newhiststate = str2state_1D(action[0])
+            newhiststate = base_utils.str2state_1D(action[0])
             newst = player - newhiststate
             newunavail = unavail + newhiststate
             newhist = torch.roll(history,1,dims=0)
@@ -114,34 +123,34 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
             break
     if i >= 1000:
         print('Sadly it is hard to setup that difficulty, try random game!')
-        return init_game_3card()
+        return base_utils.init_game_3card()
     print(f'- Done! ({i}) \n')
     return Deck
 
-def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=None,\
+def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automatic=False, difficulty=-1,\
                    showall=False, bomb=False, thinktime=0, thinkplayer='012', risk_penalty=0.0, seed=None): # Player is 0, 1, 2 for L, D, U
     if seed is None:
         seed = np.random.randint(-100000000,100000000)
     else:
-        if difficulty is not None:
+        if difficulty != -1:
             print('Seed will not work correctly together with difficulty.')
         
     print('Game Seed:', seed)
     random.seed(seed)
     
-    if difficulty is None:
+    if difficulty == -1:
         if not bomb:
-            Init_states = init_game_3card() # [Lstate, Dstate, Ustate]
+            Init_states = base_utils.init_game_3card() # [Lstate, Dstate, Ustate]
         else:
-            Init_states = init_game_3card_bombmode(bstrength)
+            Init_states = base_utils.init_game_3card_bombmode(bstrength)
     else:
         if not bomb:
             Init_states = initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb)
         else:
             print('It is hard to guess initial difficulty in Bomb Mode!')
-            Init_states = init_game_3card_bombmode(bstrength)
+            Init_states = base_utils.init_game_3card_bombmode(bstrength)
 
-    public_cards = state2str_1D(Init_states[-1].numpy())
+    public_cards = base_utils.state2str_1D(Init_states[-1].numpy())
     print(f'Landlord Cards: {public_cards}')
 
     Qs = []
@@ -170,7 +179,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         Game += f'Player:{iPlayer}|'
     else:
         Game += f'Player:A|'
-    Game += ','.join([state2str_1D(st) for st in Init_states])
+    Game += ','.join([base_utils.state2str_1D(st) for st in Init_states])
     Game += '|'
 
     SLM,QV = Models
@@ -187,7 +196,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
 
         if 'V2_2' in name:# back compatible
             if (Turn%3==iPlayer and not automatic) or thinktime == 0 or (str(Turn%3) not in thinkplayer):
-                action, Q = get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
+                action, Q = model_utils.get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,hint)
             else:
                 action, Q = get_action_adv_batch_mp(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature, Npass, Cpass,
                                         nAct=8, nRoll=400, ndepth=36, risk_penalty=risk_penalty, maxtime=thinktime, nprocess=12, sleep=True)
@@ -196,7 +205,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
                     ts = time.time()
         elif 'V2_3' in name:
             #if (Turn%3==iPlayer and not automatic):
-            action, Q = get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,hint)
+            action, Q = model_utils.get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,hint)
             
             # experiment serial rollout for botzone
             if (Turn%3==iPlayer and not automatic) and thinktime > 0 and (str(Turn%3) in thinkplayer):
@@ -211,23 +220,23 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
 
         if Turn % 3 == iPlayer and not automatic:
             #print(f'Your cards: {state2str(player)}')
-            all_acts = avail_actions(lastmove[0],lastmove[1],player,Forcemove)
+            all_acts = base_utils.avail_actions(lastmove[0],lastmove[1],player,Forcemove)
             all_acts = [[''.join(sorted(a[0])),a[1]] for a in all_acts]
             while True:
                 if len(all_acts) > 1 or Forcemove:
-                    a = input(f"{Label[Turn%3]}: You have: {state2str_1D(player.numpy())}. Your move: ")
+                    a = input(f"{Label[Turn%3]}: You have: {base_utils.state2str_1D(player.numpy())}. Your move: ")
                 else:
-                    a = input(f"{Label[Turn%3]}: You have: {state2str_1D(player.numpy())}. No Larger Combo.")
-                action = cards2action(a.upper().replace('1','A'))
+                    a = input(f"{Label[Turn%3]}: You have: {base_utils.state2str_1D(player.numpy())}. No Larger Combo.")
+                action = base_utils.cards2action(a.upper().replace('1','A'))
                 if action is not None:
                     action = [''.join(sorted(action[0])),action[1]]
                     if action in all_acts:
-                        action = [''.join(sorted(action[0], key=lambda x: c2r_base[x])),action[1]]
+                        action = [''.join(sorted(action[0], key=lambda x: base_utils.c2r_base[x])),action[1]]
                         if 'V2_2' in name:
-                            Q_r = evaluate_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
+                            Q_r = model_utils.evaluate_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature,
                                                                 action[0])
                         elif 'V2_3' in name:
-                            Q_r = evaluate_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,
+                            Q_r = model_utils.evaluate_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,
                                                                 action[0])
                         ts = time.time()
                         break
@@ -246,7 +255,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         if Forcemove:
             Forcemove = False
 
-        scores[Turn%3] += act2score(action[1])
+        scores[Turn%3] += base_utils.act2score(action[1])
 
         # conduct a move
         '''myst = state2str(player.sum(dim=0).numpy())
@@ -259,8 +268,8 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
             newhist[0] = str2state(action[0]).sum(axis=-2,keepdims=True) # first row is newest, others are moved downward
         else:
             newhist[0] = str2state(action[0])'''
-        myst = state2str_1D(player)
-        newhiststate = str2state_1D(action[0])
+        myst = base_utils.state2str_1D(player)
+        newhiststate = base_utils.str2state_1D(action[0])
         newst = player - newhiststate
         newunavail = unavail + newhiststate
         newhist = torch.roll(history,1,dims=0)
@@ -350,7 +359,7 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
         scores = np.round(scores,4)
         print(f'\n Scores: Landlord {scores[0]} | Farmer-0 {scores[1]} | Farmer-1 {scores[2]}.')
         print('\nCards Remaining:')
-        print(''.join([Label[i]+'        '+state2str_1D(p).zfill(20).replace('0',' ')+'\n' for i,p in enumerate(Init_states[:-1]) if i != Turn%3]))
+        print(''.join([Label[i]+'        '+base_utils.state2str_1D(p).zfill(20).replace('0',' ')+'\n' for i,p in enumerate(Init_states[:-1]) if i != Turn%3]))
         if (not automatic) or showall:
             #Q0 = 1/3*(Q0[0]+2-Q0[1]-Q0[2])
             Q0 = Q0[iPlayer]
@@ -386,7 +395,7 @@ def main():
     parser.add_argument("-v", "--version", type=str, default="", help="Model Version")
     parser.add_argument("-r", "--role", type=int, default=-1, choices=[-1, 0, 1, 2], help="Role number. -1: random, 0: Landlord, 1: Farmer-0, 2: Farmer-1. ")
     parser.add_argument("-t", "--temperature", type=float, default=0.0, help="Softmax temperature: randomness of AI actions (float >= 0)")
-    parser.add_argument("-d", "--difficulty", type=int, choices=[1, 2, 3, 4, 5], help="Difficulty level as quality of initial cards. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible.")
+    parser.add_argument("-d", "--difficulty", type=int, choices=[-1, 1, 2, 3, 4, 5], default=-1, help="Difficulty level as quality of initial cards. -1: random. 1: excellent, 2: good, 3: fair, 4: poor, 5: terrible.")
     parser.add_argument("-p", "--pausetime", type=float, default=0.5, help="Pause after each move in seconds (float >= 0)")
     parser.add_argument("-th", "--thinktime", type=float, default=0.0, help="AI thinktime (float >= 0)")
     parser.add_argument("-tp", "--thinkplayer", type=str, default='012', help="The player who thinks (string containing 012)")
@@ -429,10 +438,13 @@ def main():
                     if key == 'automatic' or key == 'bombmode' or key == 'showall':
                         # Convert 'true'/'false' strings to boolean values
                         setattr(args, key, config_value.lower() == 'true')
-                    elif key == 'seed':
+                    elif key == 'seed' or key == 'difficulty':
+                        print(config['PVC'][key])
                         if config['PVC'][key] == '':
                             pass
                         else:
+                            print(args)
+                            print(config_value,key)
                             setattr(args, key, type(getattr(args, key))(config_value))
                     else:
                         setattr(args, key, type(getattr(args, key))(config_value))
@@ -487,8 +499,8 @@ if __name__ == '__main__':
     else:
         q_scale = 1.0
 
-    SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
-    QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2,0.0,q_scale)
+    SLM = model_utils.Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
+    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2,0.0,q_scale)
 
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))

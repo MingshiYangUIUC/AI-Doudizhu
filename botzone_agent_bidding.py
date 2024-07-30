@@ -1,3 +1,12 @@
+"""
+
+A botzone agent that bids for Landlord.
+
+Bidding network trained by 'train_bid_network.ipynb'.
+I/O is similar to 'botzone_agent.py', check it for details.
+
+"""
+
 import random
 import math
 import json

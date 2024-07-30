@@ -1,3 +1,15 @@
+"""
+
+Basic utility functions. Used by othe scripts, do not run alone.
+
+Main components:
+    Game state initialization.
+    Conversion among game state and other format such as string, list.
+    Search and return available actions based on game rule. Speed boost by cpp equivalent in 'cpp/search_action_space.cpp'.
+    Conversion from user input (string of cards) to action format.
+
+"""
+
 import torch
 import random
 from collections import Counter
@@ -5,7 +17,6 @@ from itertools import combinations
 import time
 import os
 import sys
-#from model_V2 import *
 import numpy as np
 
 from collections import defaultdict

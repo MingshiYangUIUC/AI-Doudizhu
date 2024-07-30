@@ -1,5 +1,12 @@
 '''
+
+STILL UNDER CONSTRUCTION
+
 This module helps player using trained model...
+
+Player enters current cards holding by self, landlord's visible cards, and sequential historical actions in string format.
+AI returns next action to be taken by the player using available information.
+
 '''
 
 import torch

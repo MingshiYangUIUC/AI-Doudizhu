@@ -993,8 +993,8 @@ std::vector<std::pair<py::array_t<int>, std::pair<int, int>>> get_avail_actions_
 
 
 PYBIND11_MODULE(search_action_space, m) {
-    m.def("get_all_actions", &get_all_actions, "Test func string output");
-    m.def("get_avail_actions", &get_avail_actions, "Test func 2 string output");
-    m.def("get_all_actions_array", &get_all_actions_array, "Test func array output");
-    m.def("get_avail_actions_array", &get_avail_actions_array, "Test func 2 array output");
+    m.def("get_all_actions", &get_all_actions, "equivalent to all_action python function except opinfo > 11. string output");
+    m.def("get_avail_actions", &get_avail_actions, "equivalent to avail_action python function except opinfo > 11. string output");
+    m.def("get_all_actions_array", &get_all_actions_array, "equivalent to all_action python function except opinfo > 11. array output");
+    m.def("get_avail_actions_array", &get_avail_actions_array, "equivalent to avail_action python function except opinfo > 11. array output");
 }

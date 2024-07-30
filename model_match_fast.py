@@ -1,29 +1,25 @@
-# no elo, only win rate
+"""
+
+Evaluate model performance by testing a series of models against a fixed gating model one at a time.
+
+The model parameters should be defined in 'MATCH' section of 'config.ini'.
+The model classes are defined in 'model_utils.py'.
+Each model in the series plays with the gating model using the same randomly initialized games. Two models swap roles (farmer/landlord) and essentially play the same initialization twice.
+Win rate of model series against gating model will be logged and played.
+Testing can be parallelized if computational resource permits.
+
+"""
 
 import torch
 import random
-from collections import Counter
-from itertools import combinations
-import torch
-from torch.utils.data import TensorDataset, DataLoader
-
-
-from model_utils import *
-#from base_utils import *
+import model_utils
 from base_funcs_selfplay import gating_batchpool
-
-from collections import deque
-from torch.multiprocessing import Pool
-from tqdm import tqdm
-
 import os
 import sys
-
 import torch.multiprocessing as mp
 import numpy as np
 from matplotlib import pyplot as plt
 import gc
-
 import argparse
 import configparser
 
@@ -126,8 +122,8 @@ if __name__ == '__main__':
                 q_scale = 1.2
             else:
                 q_scale = 1.0
-            SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
-            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
+            SLM = model_utils.Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
+            QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
             QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
@@ -138,8 +134,8 @@ if __name__ == '__main__':
                 q_scale = 1.2
             else:
                 q_scale = 1.0
-            SLM = Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
-            QV = Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2,0.0,q_scale)
+            SLM = model_utils.Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
+            QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2,0.0,q_scale)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
             QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
