@@ -159,6 +159,7 @@ def parse_args():
     # hyperparameters
     parser.add_argument('--batch_size', type=int, default=256, help="Batch size for training")
     parser.add_argument('--n_episodes', type=int, default=25000, help="Number of games to be played before each round of training")
+    parser.add_argument('--n_checkpoint', type=int, default=100000, help="Number of games to be played before each checkpoint model update")
     parser.add_argument('--timestep_limit', type=int, default=1000000, help="Limit this to prevent too many timesteps generated per training round")
     parser.add_argument('--n_epoch', type=int, default=1, help="Number of epochs for training")
     parser.add_argument('--lr1', type=float, default=0.000005/64*256, help="Scaled Learning rate for model part 1")
@@ -286,7 +287,10 @@ if __name__ == '__main__':
 
     print('Init wt',SLM.fc2.weight.data[0].mean().item())
 
-    migrate = False
+    # if you already have initialized version 0 models and saved them, use the saved version (migrate = True)
+    migrate = os.path.isfile(os.path.join(wd,'models',f'SLM_{version}_{str(0).zfill(10)}.pt')) \
+          and os.path.join(wd,'models',f'QV_{version}_{str(0).zfill(10)}.pt')
+    
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
         QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))
@@ -297,6 +301,12 @@ if __name__ == '__main__':
         torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
         torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
 
+    # create checkpoint
+    SLM_ckpt = model_utils.Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
+    QV_ckpt = model_utils.Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+
+    SLM_ckpt.load_state_dict(SLM.state_dict())
+    QV_ckpt.load_state_dict(QV.state_dict())
 
     pool = mp.Pool(n_process)
 
@@ -318,11 +328,12 @@ if __name__ == '__main__':
         
         print(version, 'Playing games')
 
-        SLM.eval()
-        QV.eval()
+        # selfplay using the checkpoint model - more stable
+        SLM_ckpt.eval()
+        QV_ckpt.eval()
 
         # mp
-        tasks = [([SLM, QV], rand_param, selfplay_device, selfplay_batch_size, n_history, chunksizes[_], _, n_process, bomb_chance, bs_max, ts_limit//n_process) for _ in range(n_process*cs)]
+        tasks = [([SLM_ckpt, QV_ckpt], rand_param, selfplay_device, selfplay_batch_size, n_history, chunksizes[_], _, n_process, bomb_chance, bs_max, ts_limit//n_process) for _ in range(n_process*cs)]
 
         results = list(pool.imap_unordered(worker, tasks, chunksize=cs))
         # mp
@@ -373,7 +384,7 @@ if __name__ == '__main__':
         opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
         SLM, slm_loss = train_model_onehead('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
         SLM.to(device)
-        print('Sample wt SL',SLM.fc2.weight.data[0].mean().item())
+        print('Sample wt SL',SLM.fc2.weight.data[0].mean().item(),SLM_ckpt.fc2.weight.data[0].mean().item())
 
         sy_size = SL_Y.shape
         del SL_X, SL_Y, train_dataset, train_loader
@@ -396,19 +407,26 @@ if __name__ == '__main__':
         opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
         QV, qv_loss = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
         QV.to(device)
-        print('Sample wt QV',QV.fc2.weight.data[0].mean().item())
+        print('Sample wt QV',QV.fc2.weight.data[0].mean().item(),QV_ckpt.fc2.weight.data[0].mean().item())
 
         del X_full, Y_full, train_dataset, train_loader
 
         gc.collect()
         torch.cuda.empty_cache()
 
-        # save once every X episodes, also reset pool
+        # create checkpoint every X episodes
+        if Total_episodes % args.n_checkpoint == 0:
+            SLM_ckpt.load_state_dict(SLM.state_dict())
+            QV_ckpt.load_state_dict(QV.state_dict())
+            print('Updated checkpoint models')
+
+        # save once every X episodes
         if Total_episodes % Save_frequency == 0:
-            torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
-            torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
+            torch.save(SLM_ckpt.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
+            torch.save(QV_ckpt.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
             print('Saved models')
-            
+        
+        # reset pool
         if Total_episodes % args.n_refresh == 0:
             if 'pool' in locals():
                 pool.terminate()

@@ -22,9 +22,35 @@ from matplotlib import pyplot as plt
 import gc
 import argparse
 import configparser
+import statsmodels.api as sm
 
 wd = os.path.join(os.path.dirname(__file__))
 
+def calculate_win_rates_and_cis(wins_array, total_games_array, confidence_level=0.95):
+    if isinstance(wins_array, int) and isinstance(total_games_array, int):
+        wins_array = [wins_array]
+        total_games_array = [total_games_array]
+    win_rates = []
+    margins_of_error = []
+    
+    for wins, total_games in zip(wins_array, total_games_array):
+        # Calculate win rate
+        win_rate = wins / total_games
+        
+        # Calculate the confidence interval
+        conf_int = sm.stats.proportion_confint(wins, total_games, alpha=1-confidence_level, method='normal')
+        
+        # Calculate the margin of error
+        margin_of_error = (conf_int[1] - conf_int[0]) / 2
+        
+        # Convert to percentages
+        win_rate_percent = win_rate * 100
+        margin_of_error_percent = margin_of_error * 100
+        
+        win_rates.append(win_rate_percent)
+        margins_of_error.append(margin_of_error_percent)
+    
+    return win_rates, margins_of_error
 
 def simulate_match_wrapper(m1, m2, t, device, nh, ng, ne, seed): # dual match
     if torch.get_num_threads() > 1:
@@ -222,7 +248,18 @@ if __name__ == '__main__':
     for i,v in enumerate(versions):
         plt.plot(fullplayers[i*len(players):(i+1)*len(players)],WRL)
         plt.plot(fullplayers[i*len(players):(i+1)*len(players)],WRF)
-        plt.plot(fullplayers[i*len(players):(i+1)*len(players)],(WRL+WRF)/2)
+        
+        total_win = np.int64((WRL+WRF)*int(csim+nsim))
+        total_game = np.ones_like(total_win)*int(csim+nsim)*2
+        #print(total_win, total_game)
+
+        wr, wrint = calculate_win_rates_and_cis(total_win, total_game, 0.95)
+        #print(wr,wrint)
+        for x in range(len(WRF)):
+            plt.text(fullplayers[i*len(players):(i+1)*len(players)][x],wr[x]/100,f'{round(wr[x],2)}\n{round(wrint[x],2)}')
+        
+        plt.errorbar(fullplayers[i*len(players):(i+1)*len(players)],(WRL+WRF)/2, yerr = np.array(wrint)/100)
+
     plt.axhline(0.5,zorder=-10,alpha=0.6,color='black')
     plt.gca().xaxis.set_tick_params(rotation=45)
     plt.grid()
