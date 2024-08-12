@@ -464,26 +464,21 @@ if __name__ == '__main__':
 
     wd = os.path.dirname(__file__)
 
+    if not os.path.isdir(os.path.join(wd,'games')):
+        os.mkdir(os.path.join(wd,'games'))
+
     if torch.get_num_threads() > 1: # no auto multi threading
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
 
     Label = ['Landlord','Farmer-0','Farmer-1'] # players 0, 1, and 2
 
-    #player, automatic, showall, temperature, difficulty, pause, thinktime, thinkplayer, rp, bomb, seed = main()
     args = main()
     print(args)
 
     name = args.version
     bomb = args.bombmode
     N_history = int(args.version[1:3])
-    #name = 'H15-VBx5_128-128-128_0.01_0.0001-0.0001_256'
-    if bomb:
-        name += '-bomber'
-        mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name + '_' in f]
-        if len(mfiles) == 0:
-            name = name[:-7]
-        #pass
     
     mfiles = [int(f[-13:-3]) for f in os.listdir(os.path.join(wd,'models')) if name + '_' in f]
     
@@ -491,7 +486,7 @@ if __name__ == '__main__':
         v_M = f'{name}_{str(0).zfill(10)}'
     else:
         v_M = f'{name}_{str(max(mfiles)).zfill(10)}'
-    #v_M = 'H15-V2_1.2-Contester_0022600000'
+
     print('Model version:', v_M)
     
     if 'Bz' in v_M:
@@ -499,7 +494,7 @@ if __name__ == '__main__':
     else:
         q_scale = 1.0
 
-    SLM = model_utils.Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
+    SLM = model_utils.Network_Pcard_V2_2_BN_dropout(N_history+7, 7, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
     QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2,0.0,q_scale)
 
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
@@ -519,16 +514,9 @@ if __name__ == '__main__':
         print(f'- You are spectating AI playing, you set difficulty for {Label[args.role]}.\n')
 
 
-    #random.seed(10000)
     with torch.inference_mode():
         bstrength=200
         Turn, Qs, Log = gamewithplayer(args.role, [SLM,QV], args.temperature, args.pausetime, N_history, args.automatic,\
                                        args.difficulty, args.showall, args.bombmode, args.thinktime, args.thinkplayer, args.riskpenalty, args.seed)
 
     #print(Log)
-
-'''
-e:
-conda activate rl-0
-python E:\\Documents\\ddz\\pvc.py -h
-'''

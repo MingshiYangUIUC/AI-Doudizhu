@@ -24,7 +24,7 @@ import argparse
 import configparser
 import statsmodels.api as sm
 
-wd = os.path.join(os.path.dirname(__file__))
+
 
 def calculate_win_rates_and_cis(wins_array, total_games_array, confidence_level=0.95):
     if isinstance(wins_array, int) and isinstance(total_games_array, int):
@@ -50,7 +50,24 @@ def calculate_win_rates_and_cis(wins_array, total_games_array, confidence_level=
         win_rates.append(win_rate_percent)
         margins_of_error.append(margin_of_error_percent)
     
-    return win_rates, margins_of_error
+    return np.array(win_rates), np.array(margins_of_error)
+
+
+def win_rate_to_elo_difference(win_rates):
+    """
+    Convert an array of win rates to Elo score differences.
+    
+    :param win_rates: Array of win rates as decimals (e.g., 0.75 for 75%)
+    :return: Array of estimated Elo score differences
+    """
+    # Ensure win rates are within the valid range (0, 1)
+    if np.any(win_rates <= 0) or np.any(win_rates >= 1):
+        raise ValueError("All win rates must be between 0 and 1 (exclusive).")
+    
+    # Calculate Elo differences
+    elo_differences = -400 * np.log10((1 / win_rates) - 1)
+    return elo_differences
+
 
 def simulate_match_wrapper(m1, m2, t, device, nh, ng, ne, seed): # dual match
     if torch.get_num_threads() > 1:
@@ -61,11 +78,10 @@ def simulate_match_wrapper(m1, m2, t, device, nh, ng, ne, seed): # dual match
     models = [m1, m2]
     torch.cuda.empty_cache()
     with torch.inference_mode():
-        gatingresult = gating_batchpool(models, t, device, Nhistory=nh, ngame=ng, ntask=ne, rseed=seed)
+        gatingresult = gating_batchpool(models, t, device, nh, ngame=ng, ntask=ne, rseed=seed)
     LW = (gatingresult==0).sum()
     torch.cuda.empty_cache()
-    #gatingresult = gating_batchpool(models[::-1], t, device, Nhistory=nh, ngame=ng, ntask=ne, rseed=seed)
-    #FW = (np.array(gatingresult)!=0).sum()
+
     gc.collect()
     return LW #, FW
 
@@ -114,6 +130,11 @@ if __name__ == '__main__':
 
     device = 'cpu'
 
+    wd = os.path.join(os.path.dirname(__file__))
+
+    if not os.path.isdir(os.path.join(wd,'data_gating')):
+        os.mkdir(os.path.join(wd,'data_gating'))
+
     if torch.get_num_threads() > 1:
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
@@ -148,7 +169,9 @@ if __name__ == '__main__':
                 q_scale = 1.2
             else:
                 q_scale = 1.0
-            SLM = model_utils.Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
+
+            N_history = int(args.v_series[1:3])
+            SLM = model_utils.Network_Pcard_V2_2_BN_dropout(N_history+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
             QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
@@ -160,7 +183,9 @@ if __name__ == '__main__':
                 q_scale = 1.2
             else:
                 q_scale = 1.0
-            SLM = model_utils.Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
+            
+            N_history = int(args.v_gate[1:3])
+            SLM = model_utils.Network_Pcard_V2_2_BN_dropout(N_history+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
             QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2,0.0,q_scale)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
@@ -202,8 +227,8 @@ if __name__ == '__main__':
     pargs = []
     for i in range(len(players)):
         if i != gate_player_index:
-            pargs.append((models[i], models[gate_player_index], 0,eval_device,15,64,nsim_perplayer,seed))
-            pargs.append((models[gate_player_index], models[i], 0,eval_device,15,64,nsim_perplayer,seed))
+            pargs.append((models[i], models[gate_player_index], 0,eval_device,(int(args.v_series[1:3]),int(args.v_gate[1:3])),args.selfplay_batch_size,nsim_perplayer,seed))
+            pargs.append((models[gate_player_index], models[i], 0,eval_device,(int(args.v_gate[1:3]),int(args.v_series[1:3])),args.selfplay_batch_size,nsim_perplayer,seed))
 
     print(len(pargs))#,len(pargs[0]),len(models))
     # Create a pool of workers and distribute the tasks
@@ -254,9 +279,12 @@ if __name__ == '__main__':
         #print(total_win, total_game)
 
         wr, wrint = calculate_win_rates_and_cis(total_win, total_game, 0.95)
+        elos = [win_rate_to_elo_difference((wr-wrint)/100),win_rate_to_elo_difference(wr/100),win_rate_to_elo_difference((wr+wrint)/100)]
         #print(wr,wrint)
         for x in range(len(WRF)):
-            plt.text(fullplayers[i*len(players):(i+1)*len(players)][x],wr[x]/100,f'{round(wr[x],2)}\n{round(wrint[x],2)}')
+            plt.text(fullplayers[i*len(players):(i+1)*len(players)][x],wr[x]/100,
+                     f'{round(wr[x],2)} ± {round(wrint[x],2)}\n'
+                    +f'elo {round(elos[1][x],1)}')
         
         plt.errorbar(fullplayers[i*len(players):(i+1)*len(players)],(WRL+WRF)/2, yerr = np.array(wrint)/100)
 

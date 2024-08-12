@@ -32,9 +32,6 @@ from datetime import datetime, timezone
 def set_seed(seed):
     # Set the seed for generating random numbers
     torch.manual_seed(seed)
-    # Set the seed for generating random numbers for CUDA if you are using GPU
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
     # Set the seed for NumPy
     np.random.seed(seed)
     # Set the seed for Python random module
@@ -94,8 +91,12 @@ def worker(task_params):
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
     
-    worker_seed = int((time.time() * 1000) * os.getpid()) % (2**32)
-    set_seed(worker_seed)
+    #worker_seed = int((np.int32(time.time() * 1000) ** 5) * (os.getpid() ** 5)) % (2**32)
+    worker_seed = random.randint(0,2**32-1)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+    print(f'---------- {os.getpid()} / {worker_seed} BEGIN----------',end='\r')
 
     models, rand_param, selfplay_device, selfplay_batch_size, n_history, chunksize, ip, npr, bchance, bs_max, ts_limit = task_params
 
@@ -103,7 +104,7 @@ def worker(task_params):
     if selfplay_device == 'cuda':
         torch.cuda.empty_cache()
     with torch.inference_mode():
-        results = base_funcs_selfplay.simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, selfplay_batch_size, chunksize.item(), bchance, bs_max, ts_limit)
+        results = base_funcs_selfplay.simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, min(selfplay_batch_size,chunksize.item()), chunksize.item(), bchance, bs_max, ts_limit)
     if selfplay_device == 'cuda':
         torch.cuda.empty_cache()
     gc.collect()
@@ -197,6 +198,15 @@ if __name__ == '__main__':
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
     #mp.set_sharing_strategy('file_system')
+
+    if not os.path.isdir(os.path.join(wd,'logs')):
+        os.mkdir(os.path.join(wd,'logs'))
+    
+    if not os.path.isdir(os.path.join(wd,'models')):
+        os.mkdir(os.path.join(wd,'models'))
+
+    if not os.path.isdir(os.path.join(wd,'train')):
+        os.mkdir(os.path.join(wd,'train'))
 
     args = parse_args()
 
