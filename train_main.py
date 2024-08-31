@@ -61,6 +61,44 @@ def train_model_onehead(device, model, criterion, loader, nep, optimizer):
         print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
     return model, epoch_loss
 
+def train_model_aux(device, model, aux_weight, criterion, loader, nep, optimizer):
+    #scaler = torch.cuda.amp.GradScaler()
+    model.to(device)
+    model.train()  # Set the model to training mode
+    for epoch in range(nep):
+        running_loss = 0.0
+        
+        for inputs, targets, auxiliary_targets in tqdm(loader):
+            if inputs.size(0) > 1:
+                inputs = inputs.to(device, non_blocking=True)
+                targets = targets.to(device, non_blocking=True)
+                auxiliary_targets = auxiliary_targets.to(device, non_blocking=True)
+                
+                optimizer.zero_grad()  # Zero the gradients
+                
+                # Forward pass
+                outputs_q, outputs_aux = model(inputs)
+                
+                # Calculate losses
+                loss_q = criterion(outputs_q, targets)  # Loss for main task
+                loss_aux = criterion(outputs_aux, auxiliary_targets)  # Loss for auxiliary task
+                
+                # Combine the losses (you can adjust the weight of auxiliary loss)
+                loss = loss_q + aux_weight * loss_aux  # Adjust 0.1 as necessary for your use case
+                
+                # Backward pass
+                loss.backward()
+                
+                # Optimize
+                optimizer.step()
+                
+                running_loss += loss.item()
+        
+        # Calculate the average loss per batch over the epoch
+        epoch_loss = running_loss / len(loader)
+        print(f"Epoch {epoch+1}/{nep}, Training Loss: {epoch_loss:.4f}")
+    return model, epoch_loss
+
 def train_model(device, model, criterion, loader, nep, optimizer):
     #scaler = torch.cuda.amp.GradScaler()
     model.to(device)
@@ -138,6 +176,7 @@ def parse_args():
     parser.add_argument('-q', '--query', action='store_true', help="Query status mode: return most recent model version")
     parser.add_argument('-l', '--logging', action='store_true', help="Log training status")
     parser.add_argument('-s', '--savedata', action='store_true', help="Store selfplay data to disk ./train")
+    parser.add_argument('-f', '--freeze', type=str, default='', help="Freeze model (not train)?")
 
     # model arguments
     parser.add_argument('--version', type=str, default='V2_2.2', help="Version of the model")
@@ -167,6 +206,7 @@ def parse_args():
     parser.add_argument('--lr2', type=float, default=0.000003/64*256, help="Scaled Learning rate for model part 2")
     parser.add_argument('--l2_reg_strength', type=float, default=1e-6, help="L2 regularization strength")
     parser.add_argument('--dropout', type=float, default=0.5, help="Dropout rate")
+    parser.add_argument('--aux_weight', type=float, default=0.2, help="Auxiliary weight for expectation")
     parser.add_argument('--rand_param', type=float, default=0.01, help="Random parameter for action selection")
     parser.add_argument('--bomb_chance', type=float, default=0.01, help="Chance of getting a deck full of bombs during selfplay")
     
@@ -257,6 +297,7 @@ if __name__ == '__main__':
 
     print('B',Total_episodes, 'E',Max_episodes)
     
+    freeze = args.freeze
     n_episodes = args.n_episodes
     Save_frequency = args.n_save
     n_process = args.n_processes
@@ -271,6 +312,8 @@ if __name__ == '__main__':
     rand_param = args.rand_param
     bomb_chance = args.bomb_chance
 
+    aux_weight = args.aux_weight
+
     # Initialize model
     random_seed = random.randint(0,2**32-1)
     if Total_episodes == 0:
@@ -280,14 +323,12 @@ if __name__ == '__main__':
         f.write(f'Model init seed: {args.m_seed}\n')
         f.close()
     
-    #SLM = Network_Pcard_V2_1_BN(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
-    #QV = Network_Qv_Universal_V1_1_BN(6,15,args.m_par2)
     if 'Bz' in version:
         q_scale = 1.2
     else:
         q_scale = 1.0
     SLM = model_utils.Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
-    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
 
     if (QV.scale != 1):
         print('Bz version.')
@@ -295,17 +336,18 @@ if __name__ == '__main__':
     # reset seed to random after initialization
     set_seed(random_seed)
 
-    print('Init wt',SLM.fc2.weight.data[0].mean().item())
+    print('Init wt',SLM.fc2.weight.data[1].mean().item())
 
     # if you already have initialized version 0 models and saved them, use the saved version (migrate = True)
     migrate = os.path.isfile(os.path.join(wd,'models',f'SLM_{version}_{str(0).zfill(10)}.pt')) \
           and os.path.join(wd,'models',f'QV_{version}_{str(0).zfill(10)}.pt')
     
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
+        print('Migrated model parameters')
         SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
         QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))
 
-    print('Init wt',SLM.fc2.weight.data[0].mean().item())
+    print('Init wt',SLM.fc2.weight.data[1].mean().item())
 
     if Total_episodes == 0 and not migrate:
         torch.save(SLM.state_dict(),os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt'))
@@ -313,7 +355,7 @@ if __name__ == '__main__':
 
     # create checkpoint
     SLM_ckpt = model_utils.Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
-    QV_ckpt = model_utils.Network_Qv_Universal_V1_2_BN_dropout(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+    QV_ckpt = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
 
     SLM_ckpt.load_state_dict(SLM.state_dict())
     QV_ckpt.load_state_dict(QV.state_dict())
@@ -326,12 +368,13 @@ if __name__ == '__main__':
 
         Xbuffer = [[],[],[]]
         Ybuffer = [[],[],[]]
+        Yexp = [[],[],[]]
         SL_X = []
         SL_Y = []
         cs = 1
         
-
-        chunksizes = torch.diff(torch.torch.linspace(0,next_eps,n_process*cs+1).type(torch.int64))
+        nproc = min(n_process,next_eps)
+        chunksizes = torch.diff(torch.torch.linspace(0,next_eps,nproc*cs+1).type(torch.int64))
 
         t0 = time.time()
         #with mp.Pool(n_process) as pool:
@@ -343,7 +386,7 @@ if __name__ == '__main__':
         QV_ckpt.eval()
 
         # mp
-        tasks = [([SLM_ckpt, QV_ckpt], rand_param, selfplay_device, selfplay_batch_size, n_history, chunksizes[_], _, n_process, bomb_chance, bs_max, ts_limit//n_process) for _ in range(n_process*cs)]
+        tasks = [([SLM_ckpt, QV_ckpt], rand_param, selfplay_device, selfplay_batch_size, n_history, chunksizes[_], _, nproc, bomb_chance, bs_max, ts_limit//n_process) for _ in range(n_process*cs)]
 
         results = list(pool.imap_unordered(worker, tasks, chunksize=cs))
         # mp
@@ -355,17 +398,18 @@ if __name__ == '__main__':
         # End selfplay, process results
         STAT = 0
         STAT = np.zeros(3)
-        for SAs, Rewards, sl_x, sl_y, stat in results:
+        for SAs, Rewards, Exps, sl_x, sl_y, stat in results:
             SL_X.append(sl_x)
             SL_Y.append(sl_y)
 
             for i in range(3):
                 Xbuffer[i].append(SAs[i])
                 Ybuffer[i].append(Rewards[i])
+                Yexp[i].append(Exps[i])
             
             STAT += stat
     
-        del results, SAs, Rewards, sl_x, sl_y
+        del results, SAs, Rewards, Exps, sl_x, sl_y
 
         played_eps = int(sum(STAT))
         Total_episodes += played_eps
@@ -388,21 +432,27 @@ if __name__ == '__main__':
             torch.save(SL_X.clone().to(torch.int8), os.path.join(wd,'train',f'SL_X_int8_{note}.pt'))
             torch.save(SL_Y.clone().to(torch.int8), os.path.join(wd,'train',f'SL_Y_int8_{note}.pt'))
 
-        #train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
-        train_dataset = TensorDataset(SL_X, SL_Y)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
-        SLM, slm_loss = train_model_onehead('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
-        SLM.to(device)
-        print('Sample wt SL',SLM.fc2.weight.data[0].mean().item(),SLM_ckpt.fc2.weight.data[0].mean().item())
+        if 'SL' not in freeze:
+            #train_dataset = TensorDataset(SL_X.to('cuda'), SL_Y.to('cuda'))
+            train_dataset = TensorDataset(SL_X, SL_Y)
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
+            opt = torch.optim.Adam(SLM.parameters(), lr=LR1, weight_decay=l2_reg_strength)
+            SLM, slm_loss = train_model_onehead('cuda', SLM, torch.nn.MSELoss(), train_loader, nepoch, opt)
+            SLM.to(device)
+            print('Sample wt SL',SLM.fc2.weight.data[1].mean().item(),SLM_ckpt.fc2.weight.data[1].mean().item())
+            del train_dataset, train_loader
+        else:
+            print('Skipped training due to freeze')
+            slm_loss = -99999
 
         sy_size = SL_Y.shape
-        del SL_X, SL_Y, train_dataset, train_loader
+        del SL_X, SL_Y, 
 
         # QV part
         X_full = torch.cat([torch.concat(list(Xbuffer[i])) for i in range(3)])
         Y_full = torch.cat([torch.concat(list(Ybuffer[i])) for i in range(3)]).unsqueeze(1)
-        print(X_full.shape,Y_full.shape)
+        Y_aux = torch.cat([torch.concat(list(Yexp[i])) for i in range(3)])
+        print(X_full.shape, Y_full.shape, Y_aux.shape)
 
         if args.savedata: # save selfplay data
             note = f'{version}_{str(Total_episodes).zfill(10)}'
@@ -411,15 +461,20 @@ if __name__ == '__main__':
             torch.save(X_full[:,-15:].clone().to(torch.int8), os.path.join(wd,'train',f'QV_X-action_int8_{note}.pt'))
             torch.save(Y_full.clone().to(torch.int8), os.path.join(wd,'train',f'QV_Y_int8_{note}.pt'))
         
-        #train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
-        train_dataset = TensorDataset(X_full, Y_full)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
-        opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
-        QV, qv_loss = train_model('cuda', QV, torch.nn.MSELoss(), train_loader, nepoch, opt)
-        QV.to(device)
-        print('Sample wt QV',QV.fc2.weight.data[0].mean().item(),QV_ckpt.fc2.weight.data[0].mean().item())
+        if 'QV' not in freeze:
+            #train_dataset = TensorDataset(X_full.to('cuda'), Y_full.to('cuda'))
+            train_dataset = TensorDataset(X_full, Y_full, Y_aux)
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=n_worker, pin_memory=True)
+            opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
+            QV, qv_loss = train_model_aux('cuda', QV, aux_weight, torch.nn.MSELoss(), train_loader, nepoch, opt)
+            QV.to(device)
+            print('Sample wt QV',QV.fc2.weight.data[0].mean().item(),QV_ckpt.fc2.weight.data[0].mean().item())
+            del train_dataset, train_loader
+        else:
+            print('Skipped training due to freeze')
+            qv_loss = -99999
 
-        del X_full, Y_full, train_dataset, train_loader
+        del X_full, Y_full, 
 
         gc.collect()
         torch.cuda.empty_cache()

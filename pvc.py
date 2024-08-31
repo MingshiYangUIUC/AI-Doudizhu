@@ -72,7 +72,9 @@ def initialize_difficulty(iPlayer, Models, nhistory, difficulty, bomb=False):
                 action, Q = model_utils.get_action_serial_V2_2_2(Turn, SLM,QV,Init_states,unavail,lastmove, Forcemove, history, temperature=0)
             elif 'V2_3' in name:
                 action, Q = model_utils.get_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature=0)
-            
+            elif 'V2_4' in name:
+                action, Q = model_utils.get_action_serial_V2_4_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature=0)
+        
 
             if Turn < 3:
                 Q0.append(Q.item())
@@ -212,6 +214,9 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
                 actionx, Qx = get_action_adv(Turn, SLM, QV, Init_states, unavail, played_cards, lastmove, Forcemove, history, temperature, Npass, Cpass, nAct=5, nRoll=100, ndepth=12, maxtime=4, sleep=False)
                 print(actionx, Qx)
             # else:
+        elif 'V2_4' in name:
+            action, Q = model_utils.get_action_serial_V2_4_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,hint)
+            
 
         action_suggest = [a for a in action]
         #print(Q, action)
@@ -237,6 +242,9 @@ def gamewithplayer(iPlayer, Models, temperature, pause=0.5, nhistory=6, automati
                                                                 action[0])
                         elif 'V2_3' in name:
                             Q_r = model_utils.evaluate_action_serial_V2_3_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,
+                                                                action[0])
+                        elif 'V2_4' in name:
+                            Q_r = model_utils.evaluate_action_serial_V2_4_0(Turn, SLM,QV,Init_states,unavail,played_cards,lastmove, Forcemove, history, temperature,
                                                                 action[0])
                         ts = time.time()
                         break
@@ -495,7 +503,11 @@ if __name__ == '__main__':
         q_scale = 1.0
 
     SLM = model_utils.Network_Pcard_V2_2_BN_dropout(N_history+7, 7, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1)
-    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2,0.0,q_scale)
+    
+    if 'V2_4' in name:
+        QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(11*15,args.m_par0,args.m_par2,0.0,q_scale)
+    else:
+        QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.m_par0,args.m_par2,0.0,q_scale)
 
     SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{v_M}.pt')))
     QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{v_M}.pt')))

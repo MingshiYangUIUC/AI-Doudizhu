@@ -172,7 +172,7 @@ if __name__ == '__main__':
 
             N_history = int(args.v_series[1:3])
             SLM = model_utils.Network_Pcard_V2_2_BN_dropout(N_history+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
-            QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
+            QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
 
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
             QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))

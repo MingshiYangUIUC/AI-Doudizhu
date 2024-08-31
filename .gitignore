@@ -35,3 +35,4 @@ compile_model.py
 mingshiyang
 train_transfer.ipynb
 train_main_transfer.py
+*_test.py

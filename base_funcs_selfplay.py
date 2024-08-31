@@ -54,7 +54,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
 
     BufferStatesActs = [[[],[],[]] for _ in range(ngame)] # states_actions for 3 players
     BufferRewards = [[0,0,0] for _ in range(ngame)] # rewards for 3 players
-
+    BufferExp = [[[],[],[]] for _ in range(ngame)] # expected actions for 3 players
     #Full_output = []
     
     LL_organized = []
@@ -63,6 +63,9 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     LL_reward = []
     F0_reward = []
     F1_reward = []
+    LL_exp = []
+    F0_exp = []
+    F1_exp = []
 
     stat = np.zeros(3)
     n_steps = 0
@@ -163,18 +166,18 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             model_input2 = torch.cat(model_input2).to(dtypem)
             if len(model_input2) <= bs_max:
                 # Original code for small input sizes
-                model_output = Models[-1](model_input2.to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+                model_output = Models[-1](model_input2.to(selfplay_device))[0].to('cpu').to(torch.float32).flatten()
             else:
                 # Handle large input sizes by processing in batches
                 model_output = []
                 for i in range(0, len(model_input2), bs_max):
                     batch = model_input2[i:i+bs_max]
-                    batch_output = Models[-1](batch.to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+                    batch_output = Models[-1](batch.to(selfplay_device))[0].to('cpu').to(torch.float32).flatten()
                     model_output.append(batch_output)
                 model_output = torch.cat(model_output)
         else:
             model_input2 = torch.cat(model_input2)
-            model_output = Models[-1](model_input2).flatten()
+            model_output = Models[-1](model_input2)[0].flatten()
 
         # conduct actions for all instances
         for iout, _ in enumerate(Index[Active]):
@@ -241,7 +244,12 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
             #    print(Init_states[_][0], unavail_player[_][0], Init_states[_][0]+unavail_player[_][0])
 
             BufferStatesActs[_][Tidx].append(torch.concat([model_inter[iout].detach(),newhiststate.detach()]).unsqueeze(0))
-            #BufferRewards[_][Tidx].append(0)
+            
+            if Turn[_] >= 3: # append next 3 turns to Exp, length is 1 less than StateActs. 
+                BufferExp[_][Tidx].append(newhist[:3].flatten().unsqueeze(0).detach())
+                #print(newhist[:3].unsqueeze(0).detach().shape)
+
+            #print(Turn,'L',len(BufferStatesActs[_][Tidx]),len(BufferExp[_][Tidx]))
 
             Init_states[_][Tidx] = nextstate
             unavail[_] = newunavail
@@ -262,18 +270,27 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 Active[_] = False
 
                 # send data to output collection
-                #try:
+                # append to BufferExp[_]
+                BufferExp[_][(Tidx-2)%3].append(torch.concat([torch.zeros((1,15)),newhist[:2]],dim=0).flatten().unsqueeze(0).detach())
+                BufferExp[_][(Tidx-1)%3].append(torch.concat([torch.zeros((2,15)),newhist[:1]],dim=0).flatten().unsqueeze(0).detach())
+                BufferExp[_][Tidx].append(torch.zeros((3,15)).flatten().unsqueeze(0).detach())
+
                 for i,p in enumerate(BufferStatesActs[_]):
                     if len(p) > 0:
+                        # print(len(BufferExp[_][i]),len(p))
+
                         if i == 0:
                             LL_organized.append(torch.concat(p))
                             LL_reward.append(torch.zeros(len(p))+BufferRewards[_][i])
+                            LL_exp.append(torch.concat(BufferExp[_][i]))
                         elif i == 1:
                             F0_organized.append(torch.concat(p))
                             F0_reward.append(torch.zeros(len(p))+BufferRewards[_][i])
+                            F0_exp.append(torch.concat(BufferExp[_][i]))
                         elif i == 2:
                             F1_organized.append(torch.concat(p))
                             F1_reward.append(torch.zeros(len(p))+BufferRewards[_][i])
+                            F1_exp.append(torch.concat(BufferExp[_][i]))
                     
                         n_steps += len(p)
 
@@ -293,6 +310,7 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 # clear buffer
                 BufferStatesActs[_] = [[],[],[]]
                 BufferRewards[_] = [0,0,0]
+                BufferExp[_] = [[],[],[]]
 
                 # reset game
                 Active[_] = True
@@ -318,12 +336,16 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     LL_reward = torch.cat(LL_reward)
     F0_reward = torch.cat(F0_reward)
     F1_reward = torch.cat(F1_reward)
+    LL_exp = torch.cat(LL_exp)
+    F0_exp = torch.cat(F0_exp)
+    F1_exp = torch.cat(F1_exp)
+    #print(LL_organized.shape, LL_exp.shape, F0_organized.shape, F0_exp.shape, F1_organized.shape, F1_exp.shape)
     #print(LL_organized.shape,F0_organized.shape,F1_organized.shape)
     #print(LL_reward.shape)
     SL_X = torch.cat(SL_X)
     SL_Y = torch.cat(SL_Y)
     
-    return [LL_organized,F0_organized,F1_organized], [LL_reward,F0_reward,F1_reward], SL_X, SL_Y, stat
+    return [LL_organized,F0_organized,F1_organized], [LL_reward,F0_reward,F1_reward], [LL_exp,F0_exp,F1_exp], SL_X, SL_Y, stat
     #return Full_output, SL_X, SL_Y
 
 def gating_batchpool(Models, temperature, selfplay_device, nhs=(15,15), ngame=20, ntask=100, rseed=0):
@@ -455,7 +477,10 @@ def gating_batchpool(Models, temperature, selfplay_device, nhs=(15,15), ngame=20
         model_input2 = [torch.cat((expanded_model, actions_tensor), dim=1) for expanded_model, actions_tensor in zip(expanded_model_inter, actions_tensors)]
         
         #tg2 = time.time()
-        model_output = modelQ(torch.cat(model_input2).to(dtypem).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
+        if hasattr(modelQ, 'auxiliary_output'):
+            model_output = modelQ(torch.cat(model_input2).to(dtypem).to(selfplay_device))[0].to('cpu').to(torch.float32).flatten()
+        else:
+            model_output = modelQ(torch.cat(model_input2).to(dtypem).to(selfplay_device)).to('cpu').to(torch.float32).flatten()
         #tg3 = time.time()
         #TG += tg3-tg2
         if selfplay_device == 'cuda':
@@ -580,7 +605,7 @@ if __name__ == '__main__':
 
     #SLM = Network_Pcard_V2_1_Trans(15+7, 7, y=1, x=15, trans_heads=4, trans_layers=6, hiddensize=512)
     SLM = model_utils.Network_Pcard_V2_2_BN_dropout(15+7, 7, y=1, x=15, lstmsize=512, hiddensize=512, dropout_rate = 0.2)
-    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(input_size=11*15,lstmsize=512, hsize=512, dropout_rate = 0.2, scale_factor=1.2,offset_factor=0.0)
+    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(input_size=11*15,lstmsize=512, hsize=512, dropout_rate = 0.2, scale_factor=1.2,offset_factor=0.0)
     #SLM.load_state_dict(torch.load(os.path.join(wd,'models','SLM_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
     #QV.load_state_dict(torch.load(os.path.join(wd,'models','QV_H15-VBx5_128-128-128_0.01_0.0001-0.0001_256_0000000000.pt')))
     #quit()
@@ -592,8 +617,8 @@ if __name__ == '__main__':
     #torch.save(SLM.state_dict(),os.path.join(wd,'test_models',f'SLM_Trans.pt'))
     #torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_Trans.pt'))
 
-    N_episodes = 128
-    ng = 32
+    N_episodes = 1
+    ng = 1
     
     seed = random.randint(0,1000000000)
     seed = 12333
@@ -606,11 +631,16 @@ if __name__ == '__main__':
         with torch.inference_mode():
             out = simEpisode_batchpool_softmax([SLM,QV], 0, 'cpu', Nhistory=15, ngame=ng, ntask=N_episodes,bombchance=0.0,
                                             bs_max=64)
-            print(out[-1])
+            '''print(out[-1])
             from matplotlib import pyplot as plt
             #print(list(out[1][0].numpy()))
             plt.hist(out[1][1].numpy(),bins=100)
-            plt.show()
+            plt.show()'''
+    #print(out[0][0].shape)
+    
+    print(out[2][0].reshape((-1,3,15))[-1],len(out[2][0]))
+    print(out[2][1].reshape((-1,3,15))[-1],len(out[2][1]))
+    print(out[2][2].reshape((-1,3,15))[-1],len(out[2][2]))
 
     max_memory_used = torch.cuda.max_memory_allocated('cuda')
     #print(f"Maximum memory used by the model: {max_memory_used / (1024 ** 2)} MB")

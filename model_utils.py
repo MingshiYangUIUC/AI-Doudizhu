@@ -346,6 +346,121 @@ class Network_Qv_Universal_V1_2_BN_dropout(nn.Module): # this network uses estim
         x = x * self.scale + self.offset
         return x
 
+
+class Network_Qv_Universal_V1_2_BN_dropout_auxiliary(nn.Module): # this network uses estimated state to estimate q values of action
+                               # use 3 states (SELF, UPPER, LOWER), 1 role, and 1 action (Nelems) (z=5)
+                               # cound use more features such as history
+                               # should be simpler
+                               # use lstm and Bigstate altogether
+                               # this network also predict opponent action, although not directly used.
+
+    def __init__(self, input_size, lstmsize, hsize=256, dropout_rate=0.5, scale_factor=1.0, offset_factor=0.0):
+        super(Network_Qv_Universal_V1_2_BN_dropout_auxiliary, self).__init__()
+
+        hidden_size = hsize
+
+        self.dropout = nn.Dropout(dropout_rate)
+
+        self.fc1 = nn.Linear(input_size + lstmsize, hidden_size)
+        self.bn1 = nn.BatchNorm1d(hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.bn2 = nn.BatchNorm1d(hidden_size)
+        self.fc3 = nn.Linear(hidden_size, hidden_size)
+        self.fc4 = nn.Linear(hidden_size, hidden_size)
+        self.fc5 = nn.Linear(hidden_size, 1) # output is q values
+        self.flatten = nn.Flatten()
+        self.scale = scale_factor
+        self.offset = offset_factor
+
+        # Auxiliary task (opponent action prediction) output layer
+        self.auxiliary_output = nn.Linear(hidden_size, 45)
+
+    def forward(self, x):
+
+        # Process through FNN
+        x = self.flatten(x)
+        x = F.relu(self.bn1(self.fc1(x)))
+
+        x = self.dropout(x)
+        x1 = x
+        x = F.relu(self.bn2(self.fc2(x)))
+        x = x + x1
+
+        x = self.dropout(x)
+        x1 = x
+        x = F.relu(self.fc3(x))
+        x = x + x1
+
+        # Auxiliary output after fc3
+        aux_output = torch.sigmoid(self.auxiliary_output(x))*4
+
+        x = self.dropout(x)
+        x1 = x
+        x = F.relu(self.fc4(x))
+        x = x + x1
+
+        x = torch.sigmoid(self.fc5(x))
+
+        x = x * self.scale + self.offset
+        return x, aux_output
+
+
+class ResBlock(nn.Module):
+    def __init__(self, width):
+        super(ResBlock, self).__init__()
+        self.fc1 = nn.Linear(width, width)
+        self.fc2 = nn.Linear(width, width)
+
+    def forward(self, x):
+        residual = x  # Save the input for the residual connection
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return x + residual  # Add the input (residual connection) to the output
+
+class Network_Qv_V2_0(nn.Module):
+    def __init__(self, input_size, lstmsize, num_resblocks=3, width=256, dropout_rate=0.5, scale_factor=1.0, offset_factor=0.0):
+        super(Network_Qv_V2_0, self).__init__()
+
+        self.width = width
+
+        # Initial layer connecting input to the first residual block
+        self.fc1 = nn.Linear(input_size + lstmsize, width)
+        self.bn1 = nn.BatchNorm1d(width)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        # Create the residual blocks
+        self.resblocks = nn.ModuleList([ResBlock(width) for _ in range(num_resblocks)])
+
+        # Final layers after the residual blocks
+        self.fc_final = nn.Linear(width, 1)  # Output layer for Q values
+
+        # Auxiliary task output layer
+        self.auxiliary_output = nn.Linear(width, 45)
+
+        self.flatten = nn.Flatten()
+        self.scale = scale_factor
+        self.offset = offset_factor
+
+    def forward(self, x):
+        # Process through the initial linear, batch norm, and dropout layers
+        x = self.flatten(x)
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = self.dropout(x)
+
+        # Process through the residual blocks
+        for resblock in self.resblocks:
+            x = resblock(x)
+
+        # Auxiliary output after residual blocks
+        aux_output = torch.sigmoid(self.auxiliary_output(x)) * 4
+
+        # Final output layer
+        x = torch.sigmoid(self.fc_final(x))
+        x = x * self.scale + self.offset
+        return x, aux_output
+
+
+
 # wrapper functions for the models defined above
 
 def get_action_serial_V2_2_2(Turn, SLM, QV, Initstates,unavail,lastmove, Forcemove, history, temperature, hint=False):
@@ -552,3 +667,116 @@ def evaluate_action_serial_V2_3_0(Turn, SLM, QV, Initstates, unavail, played_car
     Q = output
     return Q
 
+def get_action_serial_V2_4_0(Turn, SLM, QV, Initstates, unavail, played_cards, lastmove, Forcemove, history, temperature, hint=False):
+    player = Initstates[Turn%3]#.clone().detach()
+    visible = Initstates[-1]#.clone().detach()
+
+    # get action
+    Bigstate = torch.cat([player.unsqueeze(0),
+                            unavail.unsqueeze(0),
+                            played_cards,
+                            visible.unsqueeze(0), # new feature
+                            torch.full((1, 15), Turn%3),
+                            history])
+    Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
+    #print(Bigstate)
+    # generate inputs
+    hinput = Bigstate.unsqueeze(0)
+    #print(hinput)
+    model_inter, lstm_out = SLM(hinput)
+    #role = torch.zeros((model_inter.shape[0],15)) + Turn%3
+    
+    if hint:
+        cprob = model_inter.numpy().round(1).reshape(2,15)
+
+        print('Hint:      ','    '.join([f' {c} ' for c in r2c_base_arr]))
+
+        c0 = [f"{str(c)}0" if len(str(c)) < 3 else str(c) for c in cprob[0]]
+        c1 = [f"{str(c)}0" if len(str(c)) < 3 else str(c) for c in cprob[1]]
+
+        print(f'{Label[(Turn-1)%3]}:  ','    '.join([str(c) for c in c0]))
+        print(f'{Label[(Turn+1)%3]}:  ','    '.join([str(c) for c in c1]))
+
+    # get all actions
+    #print(player)
+    acts = avail_actions_cpp(lastmove[0],lastmove[1],player,Forcemove)
+    #print(acts)
+    # generate inputs 2
+    model_inter = torch.concat([hinput[0,0:8,0].flatten().unsqueeze(0), # self
+                                model_inter, # upper and lower states
+                                #role,
+                                lstm_out, # lstm encoded history
+                                ],dim=-1)
+    model_input2 = torch.stack([torch.cat((model_inter.flatten(),str2state(a[0]).sum(dim=0))) for a in acts])
+
+    # get q values
+    output = QV(model_input2)
+    expect = output[1]
+    #print(expect.shape)
+    output = output[0].flatten()
+    #print(output)
+    if temperature == 0:
+        Q = torch.max(output)
+        best_act = acts[torch.argmax(output)]
+        best_exp = expect[torch.argmax(output)]
+    else:
+        # get action using probabilistic approach and temperature
+        probabilities = torch.softmax(output / temperature, dim=0)
+        distribution = torch.distributions.Categorical(probabilities)
+        
+        q = distribution.sample()
+        best_act = acts[q]
+        best_exp = expect[q]
+        Q = output[q]
+
+    if hint: # get first few acts
+        qs = torch.argsort(output).flip(dims=(0,))[:5]
+        acts_sort = [acts[i] for i in qs]
+        print('Candidates:',' | '.join([f'{"pass" if acts_sort[i][0] == "" else acts_sort[i][0]} {str(round(output[qs[i]].item()*100,1)).zfill(5)}%' for i in range(len(qs))]))
+    
+        exparr = best_exp.detach().numpy().reshape(3,15)[::-1].round(1)
+        #print(exparr)
+
+        c0 = [f"{str(c)}0" if len(str(c)) < 3 else str(c) for c in exparr[0]]
+        c1 = [f"{str(c)}0" if len(str(c)) < 3 else str(c) for c in exparr[1]]
+        c2 = [f"{str(c)}0" if len(str(c)) < 3 else str(c) for c in exparr[2]]
+
+        print(f'{Label[(Turn+1)%3]}:  ','    '.join([str(c) for c in c0]))
+        print(f'{Label[(Turn+2)%3]}:  ','    '.join([str(c) for c in c1]))
+        print(f'{Label[(Turn+3)%3]}:  ','    '.join([str(c) for c in c2]))
+
+    action = best_act
+    return action, Q
+
+
+def evaluate_action_serial_V2_4_0(Turn, SLM, QV, Initstates, unavail, played_cards,lastmove, Forcemove, history, temperature, Action):
+    player = Initstates[Turn%3]
+    visible = Initstates[-1]
+
+    # get action
+    Bigstate = torch.cat([player.unsqueeze(0),
+                            unavail.unsqueeze(0),
+                            played_cards,
+                            visible.unsqueeze(0), # new feature
+                            torch.full((1, 15), Turn%3),
+                            history])
+    Bigstate = Bigstate.unsqueeze(1) # model is not changed, so unsqueeze here
+    #print(Bigstate)
+    # generate inputs
+    hinput = Bigstate.unsqueeze(0)
+    model_inter, lstm_out = SLM(hinput)
+    #role = torch.zeros((model_inter.shape[0],15)) + Turn%3
+    
+    acts = [Action]
+    # generate inputs 2
+    model_inter = torch.concat([hinput[0,0:8,0].flatten().unsqueeze(0), # self
+                                model_inter, # upper and lower states
+                                #role,
+                                lstm_out, # lstm encoded history
+                                ],dim=-1)
+    model_input2 = torch.stack([torch.cat((model_inter.flatten(),str2state(a).sum(dim=0))) for a in acts])
+
+    # get q values
+    output = QV(model_input2)[0].flatten()
+    Q = output
+    return Q
