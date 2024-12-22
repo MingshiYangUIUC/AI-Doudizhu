@@ -26,6 +26,10 @@ logging = True
 ; FYI: Transfer learning does not seem to create strong enough model, so no code is provided to TL
 savedata = False
 
+; Freeze? (None, SL, QV, or SLQV)
+freeze = None
+
+
 
 ; Model Arguments
 
@@ -39,6 +43,12 @@ n_history = 15
 ; check "get_action_serial_*" functions in "model_utils.py" and functions in "base_funcs_selfplay.py" for detail
 n_feature = 7
 
+; Name of SLM model class in model_utils.py: 
+sl_name = Network_Pcard_V2_2_BN_dropout
+
+; Name of QVmodel class in model_utils.py: 
+qv_name = Network_Qv_V2_1_Resblock
+
 ; Model parameter 0: SLM LSTM hidden layer size
 m_par0 = 256
 
@@ -47,6 +57,9 @@ m_par1 = 512
 
 ; Model parameter 2: QV MLP hidden layer size
 m_par2 = 512
+
+; Model parameter 2: QV number of res blocks
+m_par3 = 16
 
 ; Model init seed: random seed for model initialization, this is my favorite default value lol
 m_seed = 20010101
@@ -117,6 +130,9 @@ l2_reg_strength = 1e-8
 ; Dropout rate of both models
 dropout = 0.1
 
+; Auxiliary weight for expectation
+aux_weight = 0.01
+
 ; Random parameter for action selection (>=0). p(action) = softmax( Q(action) / rand_param )
 rand_param = 0.01
 
@@ -160,6 +176,8 @@ ms_par1 = 512
 ; Model parameter 2: QV MLP for model series
 ms_par2 = 512
 
+; Model parameter 3: QV RESBLOCK for model series
+ms_par3 = 16
 ; Start iteration number
 i_start = 
 
@@ -171,6 +189,7 @@ i_stop =
 i_step = 
 
 ; Number of games per pair of model (AxB and BxA are two pairs)
+; 2*n_game games will be played between two model, n_game unique games are generated but models swap roles once.
 n_game = 10000
 
 ; Max number of CPU processes used in selfplay, ideally one process per task. Will be lower if there are not enough tasks
