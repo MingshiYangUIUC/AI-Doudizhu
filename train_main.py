@@ -5,6 +5,8 @@ Script used to train models.
 Settings about training should be defined in 'TRAIN' section of 'config.ini'.
 
 """
+import os
+os.environ['TORCHINDUCTOR_COMPILE_THREADS'] = '1'
 
 import torch
 import random
@@ -28,6 +30,8 @@ import pickle
 import argparse
 import configparser
 from datetime import datetime, timezone
+
+import importlib
 
 def set_seed(seed):
     # Set the seed for generating random numbers
@@ -141,6 +145,12 @@ def worker(task_params):
     results = []
     if selfplay_device == 'cuda':
         torch.cuda.empty_cache()
+
+        models[0].to(torch.float16).to(selfplay_device)  # SL
+        models[-1].to(torch.float16).to(selfplay_device) # QM
+        models[0] = torch.compile(models[0])
+        models[1] = torch.compile(models[1])
+
     with torch.inference_mode():
         results = base_funcs_selfplay.simEpisode_batchpool_softmax(models, rand_param, selfplay_device, n_history, min(selfplay_batch_size,chunksize.item()), chunksize.item(), bchance, bs_max, ts_limit)
     if selfplay_device == 'cuda':
@@ -182,9 +192,12 @@ def parse_args():
     parser.add_argument('--version', type=str, default='V2_2.2', help="Version of the model")
     parser.add_argument('--n_history', type=int, default=15, help="Number of historic moves in model input")
     parser.add_argument('--n_feature', type=int, default=7, help="Additional feature size of the model")
+    parser.add_argument('--sl_name', type=str, default='somename', help="Name of SLM model class")
+    parser.add_argument('--qv_name', type=str, default='somename', help="Name of QV model class")
     parser.add_argument('--m_par0', type=int, default=512, help="Model parameter 0: SLM LSTM")
     parser.add_argument('--m_par1', type=int, default=512, help="Model parameter 1: SLM MLP")
     parser.add_argument('--m_par2', type=int, default=512, help="Model parameter 2: QV MLP")
+    parser.add_argument('--m_par3', type=int, default=-1, help="Model parameter 3: QV n Resblock")
     parser.add_argument('--m_seed', type=int, default=20010101, help="Model init seed")
 
     # environment arguments
@@ -237,6 +250,7 @@ def parse_args():
 if __name__ == '__main__':
     wd = os.path.dirname(__file__)
     mp.set_start_method('spawn', force=True)
+    torch.set_float32_matmul_precision('high')
     #mp.set_sharing_strategy('file_system')
 
     if not os.path.isdir(os.path.join(wd,'logs')):
@@ -327,8 +341,28 @@ if __name__ == '__main__':
         q_scale = 1.2
     else:
         q_scale = 1.0
-    SLM = model_utils.Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
-    QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+    #SLM = model_utils.Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
+    #QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+
+    module_name = "model_utils"
+    sl_name = args.sl_name
+    qv_name = args.qv_name
+
+    # Dynamically import the module
+    all_models = importlib.import_module(module_name)
+
+    # Get the class from the module
+    msl = getattr(all_models, sl_name)
+    mqv = getattr(all_models, qv_name)
+
+    # Initialize the class with required arguments
+    SLM = msl(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
+    
+    if 'Resblock' in qv_name:
+        QV = mqv(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, num_resblocks=args.m_par3, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0)
+    else:
+        QV = mqv(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0)
+
 
     if (QV.scale != 1):
         print('Bz version.')
@@ -344,8 +378,11 @@ if __name__ == '__main__':
     
     if Total_episodes > 0 or migrate: # can migrate other model to be episode 0 model
         print('Migrated model parameters')
-        SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
-        QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))
+        try:
+            SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{str(Total_episodes).zfill(10)}.pt')))
+            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt')))
+        except:
+            migrate = False
 
     print('Init wt',SLM.fc2.weight.data[1].mean().item())
 
@@ -354,8 +391,11 @@ if __name__ == '__main__':
         torch.save(QV.state_dict(),os.path.join(wd,'models',f'QV_{version}_{str(Total_episodes).zfill(10)}.pt'))
 
     # create checkpoint
-    SLM_ckpt = model_utils.Network_Pcard_V2_2_BN_dropout(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
-    QV_ckpt = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0) # action, lastmove, upper-lower state, action
+    SLM_ckpt = msl(n_history+n_feature, n_feature, y=1, x=15, lstmsize=args.m_par0, hiddensize=args.m_par1, dropout_rate=args.dropout)
+    if 'Resblock' in qv_name:
+        QV_ckpt = mqv(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, num_resblocks=args.m_par3, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0)
+    else:
+        QV_ckpt = mqv(input_size=(n_feature+1+2+1)*15,lstmsize=args.m_par0, hsize=args.m_par2, dropout_rate=args.dropout, scale_factor=q_scale, offset_factor=0.0)
 
     SLM_ckpt.load_state_dict(SLM.state_dict())
     QV_ckpt.load_state_dict(QV.state_dict())
@@ -363,6 +403,9 @@ if __name__ == '__main__':
     pool = mp.Pool(n_process)
 
     next_eps = n_episodes
+
+    #SLM = torch.compile(SLM)
+    #QV = torch.compile(QV)
 
     while Total_episodes < Max_episodes:
 
@@ -468,7 +511,7 @@ if __name__ == '__main__':
             opt = torch.optim.Adam(QV.parameters(), lr=LR2, weight_decay=l2_reg_strength)
             QV, qv_loss = train_model_aux('cuda', QV, aux_weight, torch.nn.MSELoss(), train_loader, nepoch, opt)
             QV.to(device)
-            print('Sample wt QV',QV.fc2.weight.data[0].mean().item(),QV_ckpt.fc2.weight.data[0].mean().item())
+            print('Sample wt QV',list(QV.children())[0].weight.data.mean().item(),list(QV_ckpt.children())[0].weight.data.mean().item())
             del train_dataset, train_loader
         else:
             print('Skipped training due to freeze')

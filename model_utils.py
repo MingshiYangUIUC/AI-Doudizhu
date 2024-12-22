@@ -408,6 +408,10 @@ class Network_Qv_Universal_V1_2_BN_dropout_auxiliary(nn.Module): # this network 
 class ResBlock(nn.Module):
     def __init__(self, width):
         super(ResBlock, self).__init__()
+        
+        self.bn1 = nn.BatchNorm1d(width)
+        self.bn2 = nn.BatchNorm1d(width)
+
         self.fc1 = nn.Linear(width, width)
         self.fc2 = nn.Linear(width, width)
 
@@ -416,26 +420,28 @@ class ResBlock(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         return x + residual  # Add the input (residual connection) to the output
+    
 
-class Network_Qv_V2_0(nn.Module):
-    def __init__(self, input_size, lstmsize, num_resblocks=3, width=256, dropout_rate=0.5, scale_factor=1.0, offset_factor=0.0):
-        super(Network_Qv_V2_0, self).__init__()
 
-        self.width = width
+class Network_Qv_V2_0_Resblock(nn.Module):
+    def __init__(self, input_size, lstmsize, num_resblocks=3, hsize=256, dropout_rate=0.5, scale_factor=1.0, offset_factor=0.0):
+        super(Network_Qv_V2_0_Resblock, self).__init__()
+
+        self.hsize = hsize
 
         # Initial layer connecting input to the first residual block
-        self.fc1 = nn.Linear(input_size + lstmsize, width)
-        self.bn1 = nn.BatchNorm1d(width)
-        self.dropout = nn.Dropout(dropout_rate)
+        self.fc1 = nn.Linear(input_size + lstmsize, hsize)
+        #self.bn1 = nn.BatchNorm1d(hsize)
+        #self.dropout = nn.Dropout(dropout_rate)
 
         # Create the residual blocks
-        self.resblocks = nn.ModuleList([ResBlock(width) for _ in range(num_resblocks)])
+        self.resblocks = nn.ModuleList([ResBlock(hsize) for _ in range(num_resblocks)])
 
         # Final layers after the residual blocks
-        self.fc_final = nn.Linear(width, 1)  # Output layer for Q values
+        self.fc_final = nn.Linear(hsize, 1)  # Output layer for Q values
 
         # Auxiliary task output layer
-        self.auxiliary_output = nn.Linear(width, 45)
+        self.auxiliary_output = nn.Linear(hsize, 45)
 
         self.flatten = nn.Flatten()
         self.scale = scale_factor
@@ -444,8 +450,8 @@ class Network_Qv_V2_0(nn.Module):
     def forward(self, x):
         # Process through the initial linear, batch norm, and dropout layers
         x = self.flatten(x)
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = self.dropout(x)
+        x = F.relu(self.fc1(x))
+        #x = self.dropout(x)
 
         # Process through the residual blocks
         for resblock in self.resblocks:
@@ -459,7 +465,63 @@ class Network_Qv_V2_0(nn.Module):
         x = x * self.scale + self.offset
         return x, aux_output
 
+class ResBlock2(nn.Module):
+    def __init__(self, width):
+        super(ResBlock2, self).__init__()
+        
+        self.bn1 = nn.BatchNorm1d(width)
+        self.bn2 = nn.BatchNorm1d(width)
+        
+        self.fc1 = nn.Linear(width, width)
+        self.fc2 = nn.Linear(width, width)
 
+    def forward(self, x):
+        residual = x  # Save the input for the residual connection
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = F.relu(self.bn2(self.fc2(x)) + residual) # Add the input (residual connection) to the output
+        return x  
+
+class Network_Qv_V2_1_Resblock(nn.Module):
+    def __init__(self, input_size, lstmsize, num_resblocks=3, hsize=256, dropout_rate=0.5, scale_factor=1.0, offset_factor=0.0):
+        super(Network_Qv_V2_1_Resblock, self).__init__()
+
+        self.hsize = hsize
+
+        # Initial layer connecting input to the first residual block
+        self.fc1 = nn.Linear(input_size + lstmsize, hsize)
+        #self.bn1 = nn.BatchNorm1d(hsize)
+        #self.dropout = nn.Dropout(dropout_rate)
+
+        # Create the residual blocks
+        self.resblocks = nn.ModuleList([ResBlock2(hsize) for _ in range(num_resblocks)])
+
+        # Final layers after the residual blocks
+        self.fc_final = nn.Linear(hsize, 1)  # Output layer for Q values
+
+        # Auxiliary task output layer
+        self.auxiliary_output = nn.Linear(hsize, 45)
+
+        self.flatten = nn.Flatten()
+        self.scale = scale_factor
+        self.offset = offset_factor
+
+    def forward(self, x):
+        # Process through the initial linear, batch norm, and dropout layers
+        x = self.flatten(x)
+        x = F.relu(self.fc1(x))
+        #x = self.dropout(x)
+
+        # Process through the residual blocks
+        for resblock in self.resblocks:
+            x = resblock(x)
+
+        # Auxiliary output after residual blocks
+        aux_output = torch.sigmoid(self.auxiliary_output(x)) * 4
+
+        # Final output layer
+        x = torch.sigmoid(self.fc_final(x))
+        x = x * self.scale + self.offset
+        return x, aux_output
 
 # wrapper functions for the models defined above
 

@@ -93,11 +93,13 @@ def parse_args():
     parser.add_argument('--mg_par0', type=int, default=512, help="Model parameter 0: SLM LSTM")
     parser.add_argument('--mg_par1', type=int, default=512, help="Model parameter 1: SLM MLP")
     parser.add_argument('--mg_par2', type=int, default=512, help="Model parameter 2: QV MLP")
+    parser.add_argument('--mg_par3', type=int, default=512, help="Model parameter 3: QV RESBLOCK")
     parser.add_argument('--i_gate', type=int, default='-1', help="Iteration number of gating model")
     parser.add_argument('--v_series', type=str, default='', help="Version of model series")
     parser.add_argument('--ms_par0', type=int, default=512, help="Model parameter 0: SLM LSTM")
     parser.add_argument('--ms_par1', type=int, default=512, help="Model parameter 1: SLM MLP")
     parser.add_argument('--ms_par2', type=int, default=512, help="Model parameter 2: QV MLP")
+    parser.add_argument('--ms_par3', type=int, default=512, help="Model parameter 3: QV RESBLOCK")
     parser.add_argument('--i_start', type=int, default='-1', help="Start iteration number")
     parser.add_argument('--i_stop', type=int, default='-1', help="Stop iteration number (inclusive)")
     parser.add_argument('--i_step', type=int, default='-1', help="Iteration number step")
@@ -172,10 +174,14 @@ if __name__ == '__main__':
 
             N_history = int(args.v_series[1:3])
             SLM = model_utils.Network_Pcard_V2_2_BN_dropout(N_history+7, 7, y=1, x=15, lstmsize=args.ms_par0, hiddensize=args.ms_par1)
-            QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
-
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            try:
+                QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout_auxiliary(11*15,args.ms_par0,args.ms_par2,0.0,q_scale)
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            except:
+                QV = model_utils.Network_Qv_V2_1_Resblock(11*15,args.ms_par0,args.ms_par3,args.ms_par2,0.0,q_scale)
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+
         
         else:
             version = args.v_gate
@@ -186,10 +192,14 @@ if __name__ == '__main__':
             
             N_history = int(args.v_gate[1:3])
             SLM = model_utils.Network_Pcard_V2_2_BN_dropout(N_history+7, 7, y=1, x=15, lstmsize=args.mg_par0, hiddensize=args.mg_par1)
-            QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2,0.0,q_scale)
-
             SLM.load_state_dict(torch.load(os.path.join(wd,'models',f'SLM_{version}_{session}.pt')))
-            QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            try:
+                QV = model_utils.Network_Qv_Universal_V1_2_BN_dropout(11*15,args.mg_par0,args.mg_par2,0.0,q_scale)
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+            except:
+                QV = model_utils.Network_Qv_V2_1_Resblock(11*15,args.mg_par0,args.mg_par2,args.mg_par2,0.0,q_scale)
+                QV.load_state_dict(torch.load(os.path.join(wd,'models',f'QV_{version}_{session}.pt')))
+
             
         
         SLM.eval()

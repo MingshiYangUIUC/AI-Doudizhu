@@ -21,10 +21,10 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     bs_max = bs_max * ngame
     #print('Init wt',Models[0].fc2.weight.data[0].mean())
     #quit()
+    nans=0
     if selfplay_device == 'cuda':
         dtypem = torch.float16
-        Models[0].to(dtypem).to(selfplay_device)  # SL
-        Models[-1].to(dtypem).to(selfplay_device) # QM
+        
     else:
         dtypem = torch.float32
     
@@ -196,11 +196,16 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
                 qa = torch.argmax(output)
                 best_act = acts[qa]
             else:
-                # get action using probabilistic approach and temperature
-                probabilities = torch.softmax(output / temperature, dim=0)
-                distribution = torch.distributions.Categorical(probabilities)
-                qa = distribution.sample()
-                best_act = acts[qa]
+                try:
+                    # get action using probabilistic approach and temperature
+                    probabilities = torch.softmax(output / temperature, dim=0)
+                    distribution = torch.distributions.Categorical(probabilities)
+                    qa = distribution.sample()
+                    best_act = acts[qa]
+                except:
+                    qa = random.choice(torch.arange(len(acts)))
+                    best_act = acts[qa]
+                    nans += 1
 
             #print(torch.argmax(output))
             action = best_act
@@ -344,6 +349,8 @@ def simEpisode_batchpool_softmax(Models, temperature, selfplay_device, Nhistory=
     #print(LL_reward.shape)
     SL_X = torch.cat(SL_X)
     SL_Y = torch.cat(SL_Y)
+
+    print('NAN:',nans,end='|')
     
     return [LL_organized,F0_organized,F1_organized], [LL_reward,F0_reward,F1_reward], [LL_exp,F0_exp,F1_exp], SL_X, SL_Y, stat
     #return Full_output, SL_X, SL_Y
